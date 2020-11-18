@@ -37,8 +37,10 @@ import java.io.IOException;
 import javax.annotation.concurrent.NotThreadSafe;
 import org.junit.runner.Description;
 import org.junit.runner.Result;
-import org.junit.runner.notification.Failure;
 import org.junit.runner.notification.RunListener;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.perf.ProcessVitals;
 import org.spf4j.stackmonitor.FastStackCollector;
 import org.spf4j.stackmonitor.Sampler;
 
@@ -81,16 +83,20 @@ import org.spf4j.stackmonitor.Sampler;
 @NotThreadSafe
 public final class Spf4jRunListener extends RunListener {
 
+  private static final Logger LOG = LoggerFactory.getLogger(Spf4jRunListener.class);
+
   private final Sampler sampler;
 
   private final File destinationFolder;
 
   private volatile File lastWrittenFile;
 
+  private ProcessVitals vitals;
+
   public Spf4jRunListener() {
     sampler = new Sampler(Integer.getInteger("spf4j.junit.sampleTimeMillis", 5),
           Integer.getInteger("spf4j.junit.dumpAfterMillis", Integer.MAX_VALUE),
-          new FastStackCollector(true));
+          (t) -> new FastStackCollector(false, true, new Thread[] {t}));
 
     destinationFolder = new File(System.getProperty("spf4j.junit.destinationFolder",
           "target/junit-ssdump"));
@@ -101,20 +107,11 @@ public final class Spf4jRunListener extends RunListener {
   }
 
   @Override
-  public void testFailure(final Failure failure)
-          throws IOException {
-    File dumpToFile = sampler.dumpToFile(new File(destinationFolder, failure.getTestHeader() + ".ssdump2"));
-    if (dumpToFile != null) {
-      System.out.print("Profile saved to " + dumpToFile);
-    }
-  }
-
-  @Override
   public void testFinished(final Description description)
           throws IOException {
-    File dump = sampler.dumpToFile(new File(destinationFolder, description.getDisplayName() + ".ssdump2"));
+    File dump = sampler.dumpToFile(destinationFolder, description.getDisplayName() + ".ssdump2");
     if (dump != null) {
-      System.out.print("Profile saved to " + dump);
+      LOG.info("Profile saved to {}", dump);
       lastWrittenFile = dump;
     }
   }
@@ -122,11 +119,14 @@ public final class Spf4jRunListener extends RunListener {
   @Override
   public void testRunFinished(final Result result) throws InterruptedException {
     sampler.stop();
+    vitals.close();
   }
 
   @Override
   public void testRunStarted(final Description description)  {
    sampler.start();
+   vitals = ProcessVitals.getOrCreate();
+   vitals.start();
   }
 
   public Sampler getSampler() {

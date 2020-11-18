@@ -32,11 +32,15 @@
 package org.spf4j.concurrent.jdbc;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.File;
+import java.io.IOException;
 import java.sql.SQLException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.h2.jdbcx.JdbcDataSource;
-import org.spf4j.stackmonitor.FastStackCollector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.stackmonitor.Sampler;
 
 /**
  *
@@ -45,34 +49,39 @@ import org.spf4j.stackmonitor.FastStackCollector;
 @SuppressFBWarnings({"PREDICTABLE_RANDOM", "HARD_CODE_PASSWORD" })
 public final class DecentSemaphoreHandler {
 
+  private static final Logger LOG = LoggerFactory.getLogger(DecentSemaphoreHandler.class);
+
   static {
     System.setProperty("spf4j.heartbeat.intervalMillis", "2000"); // 2 second heartbeat
   }
 
-  @SuppressFBWarnings("MDM_THREAD_YIELD")
-  public static void main(final String[] args) throws InterruptedException, TimeoutException, SQLException {
-    Runtime.getRuntime().addShutdownHook(new Thread() {
-      @Override
-      public void run() {
-        FastStackCollector.dumpToPrintStream(System.err);
-      }
+  private DecentSemaphoreHandler() { }
 
-    });
+  @SuppressFBWarnings("MDM_THREAD_YIELD")
+  public static void main(final String[] args)
+          throws InterruptedException, TimeoutException, SQLException, IOException {
     String connectionString = args[0];
     String semaphoreName = args[1];
     JdbcDataSource ds = new JdbcDataSource();
     ds.setURL(connectionString);
     ds.setUser("sa");
     ds.setPassword("sa");
+    Sampler s = new Sampler(5, 10000);
+    s.registerJmx();
+    s.start();
+    LOG.info("started sampling");
     JdbcSemaphore semaphore = new JdbcSemaphore(ds, semaphoreName, 3);
     for (int i = 0; i < 50; i++) {
       semaphore.acquire(1, 1L, TimeUnit.SECONDS);
       Thread.sleep((long) (Math.random() * 10) + 10);
-      System.out.println(System.currentTimeMillis());
+      LOG.info("beat");
       Thread.sleep((long) (Math.random() * 10) + 10);
       semaphore.release();
     }
     semaphore.close();
+    File dumpToFile = s.dumpToFile();
+    LOG.info("stack samples dumped to {}", dumpToFile);
+    s.stop();
     System.exit(0);
   }
 

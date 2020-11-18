@@ -97,6 +97,10 @@ public final class MemorizingBufferedInputStream extends FilterInputStream {
         this(in, 16384, 8192, ArraySuppliers.Bytes.GL_SUPPLIER, charset);
     }
 
+    public MemorizingBufferedInputStream(final InputStream in, final Charset charset, final int size) {
+        this(in, size, size / 2, ArraySuppliers.Bytes.GL_SUPPLIER, charset);
+    }
+
     public MemorizingBufferedInputStream(final InputStream in,
             final int size, final int readSize,
             final SizedRecyclingSupplier<byte[]> bufferProvider,
@@ -241,6 +245,9 @@ public final class MemorizingBufferedInputStream extends FilterInputStream {
     public synchronized int read(final byte[] b, final int off, final int len) throws IOException {
         if (isClosed) {
             throw new IOException("Stream is closed " + this);
+        }
+        if (len < 0 || off + len > b.length) {
+          throw new ArrayIndexOutOfBoundsException("Offset " + off  + " or len " + len);
         }
         int availableToRead = availableToRead();
         if (availableToRead <= 0) {

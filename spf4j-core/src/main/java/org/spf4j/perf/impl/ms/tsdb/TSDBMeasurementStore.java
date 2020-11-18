@@ -35,16 +35,13 @@ import org.spf4j.perf.MeasurementsInfo;
 import org.spf4j.perf.MeasurementStore;
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
 import javax.annotation.concurrent.ThreadSafe;
 import org.spf4j.jmx.JmxExport;
+import org.spf4j.perf.MeasurementStoreQuery;
 import org.spf4j.tsdb2.TSDBQuery;
 import org.spf4j.tsdb2.TSDBWriter;
-import org.spf4j.tsdb2.avro.ColumnDef;
-import org.spf4j.tsdb2.avro.TableDef;
-import org.spf4j.tsdb2.avro.Type;
+import org.spf4j.tsdb2.TableDefs;
 
 /**
  *
@@ -56,31 +53,18 @@ public final class TSDBMeasurementStore
 
   private final TSDBWriter database;
 
+  private final TSDBMeasurementStoreReader reader;
+
   public TSDBMeasurementStore(final File databaseFile) throws IOException {
     this.database = new TSDBWriter(databaseFile, 1024, "", false);
+    reader = new TSDBMeasurementStoreReader(databaseFile);
   }
 
   @Override
   public long alocateMeasurements(final MeasurementsInfo measurement,
           final int sampleTimeMillis) throws IOException {
-    TableDef td = TableDef.newBuilder()
-            .setName(measurement.getMeasuredEntity().toString())
-            .setSampleTime(sampleTimeMillis)
-            .setId(-1).build();
-    int numberOfMeasurements = measurement.getNumberOfMeasurements();
-    List<ColumnDef> columns = new ArrayList<>(numberOfMeasurements);
-    for (int i = 0; i < numberOfMeasurements; i++) {
-      String mname = measurement.getMeasurementName(i);
-      String unit = measurement.getMeasurementUnit(i);
-      ColumnDef cd = new ColumnDef();
-      cd.name = mname;
-      cd.unitOfMeasurement = unit;
-      cd.type = Type.LONG;
-      cd.description = "";
-      columns.add(cd);
-    }
-    td.columns = columns;
-    return database.writeTableDef(td);
+
+    return database.writeTableDef(TableDefs.from(measurement, sampleTimeMillis, -1L));
   }
 
   @Override
@@ -121,6 +105,11 @@ public final class TSDBMeasurementStore
 
   public TSDBWriter getDBWriter() {
     return database;
+  }
+
+  @Override
+  public MeasurementStoreQuery query() {
+    return reader;
   }
 
 }

@@ -31,17 +31,20 @@
  */
 package org.spf4j.base;
 
-import com.google.common.base.Charsets;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.base.avro.Method;
 import org.spf4j.io.AppendableLimiterWithOverflow;
 import org.spf4j.io.ConfigurableAppenderSupplier;
 import org.spf4j.io.ObjectAppender;
-import org.spf4j.io.appenders.LocalDateAppender;
-import org.spf4j.ssdump2.avro.AMethod;
 
 /**
  *
@@ -50,77 +53,101 @@ import org.spf4j.ssdump2.avro.AMethod;
 @SuppressFBWarnings("SIC_INNER_SHOULD_BE_STATIC_ANON")
 public class Slf4jMessageFormatterTest {
 
-    @Test
-    public void testFormatter() throws IOException {
-        StringBuilder sb = new StringBuilder();
-        Slf4jMessageFormatter.format(sb, "bla bla");
-        Assert.assertEquals("bla bla", sb.toString());
-        sb.setLength(0);
-        Slf4jMessageFormatter.format(sb, "bla bla {}", "coco");
-        Assert.assertEquals("bla bla coco", sb.toString());
-        sb.setLength(0);
-        Slf4jMessageFormatter.format(sb, "\\{}bla bla {}", "coco");
-        Assert.assertEquals("{}bla bla coco", sb.toString());
-        sb.setLength(0);
-        int processed = Slf4jMessageFormatter.format(sb, "Some Message", "coco");
-        Assert.assertEquals("Some Message", sb.toString());
-        Assert.assertEquals(0, processed);
-        sb.setLength(0);
-        processed = Slf4jMessageFormatter.format(sb, "Some Message {}", new ConfigurableAppenderSupplier(),
-                Pair.of("a", "b"));
-        Assert.assertEquals("Some Message a,b", sb.toString());
-        Assert.assertEquals(1, processed);
-    }
+  private static final Logger LOG = LoggerFactory.getLogger(Slf4jMessageFormatterTest.class);
 
-    @Test
-    public void testFormatter2() throws IOException {
-        ConfigurableAppenderSupplier appSupp = new ConfigurableAppenderSupplier();
-        System.out.println(appSupp);
-        StringBuilder sb = new StringBuilder();
-        final long currentTimeMillis = System.currentTimeMillis();
-        Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, new java.sql.Date(currentTimeMillis));
-        Assert.assertEquals("bla bla " + LocalDateAppender.FMT.print(currentTimeMillis), sb.toString());
-        sb.setLength(0);
-        AMethod method = AMethod.newBuilder().setName("m1").setDeclaringClass("c1").build();
-        int written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, method);
-        Assert.assertEquals("bla bla {\"declaringClass\":\"c1\",\"name\":\"m1\"}", sb.toString());
-        Assert.assertEquals(1, written);
-        sb.setLength(0);
-        written = Slf4jMessageFormatter.format(1, sb, "bla bla {}", appSupp,  "ifff", method);
-        Assert.assertEquals("bla bla {\"declaringClass\":\"c1\",\"name\":\"m1\"}", sb.toString());
-        Assert.assertEquals(2, written);
-        sb.setLength(0);
-        written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, method, "yohooo");
-        System.out.println("formatted message: " + sb.toString());
-        Assert.assertEquals(1, written);
-        sb.setLength(0);
-        written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp);
-        System.out.println("formatted message: " + sb.toString());
-        Assert.assertEquals(0, written);
-        sb.setLength(0);
-        EscapeJsonStringAppendableWrapper escaper = new EscapeJsonStringAppendableWrapper(sb);
-        Slf4jMessageFormatter.format(escaper, "bla bla {} {}", appSupp, "\n\u2013\u0010",
-                new int [] {1, 2, 3});
-        System.out.println("formatted message: " + sb);
-        Assert.assertEquals("bla bla \\n–\\u0010 [1, 2, 3]", sb.toString());
-        appSupp.replace(String.class, (final ObjectAppender<? super String> input) -> new ObjectAppender<String>() {
-          @Override
-          public void append(final String object, final Appendable appendTo) throws IOException {
-            try (AppendableLimiterWithOverflow limiter =
-                    new AppendableLimiterWithOverflow(90, File.createTempFile("string", ".overflow"),
-                            "...@", Charsets.UTF_8, appendTo)) {
-              input.append(object, limiter);
-            }
-          }
-        });
-        sb.setLength(0);
-        Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp,
-         "01234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789");
-        System.out.println(sb.toString());
+  @Test
+  public void testGetFormatParameterNumber() {
+    Assert.assertEquals(0, Slf4jMessageFormatter.getFormatParameterNumber("bla bla"));
+    Assert.assertEquals(1, Slf4jMessageFormatter.getFormatParameterNumber("bla bla {}"));
+    Assert.assertEquals(2, Slf4jMessageFormatter.getFormatParameterNumber("{} bla bla {}"));
+    Assert.assertEquals(1, Slf4jMessageFormatter.getFormatParameterNumber("\\{} bla bla {}"));
+  }
 
 
-    }
+  @Test
+  public void testFormatter() throws IOException {
+    StringBuilder sb = new StringBuilder();
+    Slf4jMessageFormatter.format(sb, "bla bla");
+    Assert.assertEquals("bla bla", sb.toString());
+    sb.setLength(0);
+    Slf4jMessageFormatter.format(sb, "bla bla {}", "coco");
+    Assert.assertEquals("bla bla coco", sb.toString());
+    sb.setLength(0);
+    Slf4jMessageFormatter.format(sb, "\\{}bla bla {}", "coco");
+    Assert.assertEquals("{}bla bla coco", sb.toString());
+    sb.setLength(0);
+    int processed = Slf4jMessageFormatter.format(sb, "Some Message", "coco");
+    Assert.assertEquals("Some Message", sb.toString());
+    Assert.assertEquals(0, processed);
+    sb.setLength(0);
+    processed = Slf4jMessageFormatter.format(sb, "Some Message {}", new ConfigurableAppenderSupplier(),
+            Pair.of("a", "b"));
+    Assert.assertEquals("Some Message a,b", sb.toString());
+    Assert.assertEquals(1, processed);
+  }
 
+  @Test
+  public void testFormatter2() throws IOException {
+    ConfigurableAppenderSupplier appSupp = new ConfigurableAppenderSupplier();
+    LOG.debug("ConfAppenderSupp = {}", appSupp);
+    StringBuilder sb = new StringBuilder();
+    final long currentTimeMillis = System.currentTimeMillis();
+    Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, new java.sql.Date(currentTimeMillis));
+    Assert.assertEquals("bla bla " + DateTimeFormats.DT_FORMAT.format(Instant.now()), sb.toString());
+    sb.setLength(0);
+    Method method = new Method("c1", "m1");
+    int written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, method);
+    Assert.assertEquals("bla bla {\"declaringClass\":\"c1\",\"name\":\"m1\"}", sb.toString());
+    Assert.assertEquals(1, written);
+    sb.setLength(0);
+    written = Slf4jMessageFormatter.format(1, sb, "bla bla {}", appSupp, "ifff", method);
+    Assert.assertEquals("bla bla {\"declaringClass\":\"c1\",\"name\":\"m1\"}", sb.toString());
+    Assert.assertEquals(2, written);
+    sb.setLength(0);
+    written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp, method, "yohooo");
+    LOG.debug("formatted message: {}", sb);
+    Assert.assertEquals(1, written);
+    sb.setLength(0);
+    written = Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp);
+    LOG.debug("formatted message: {}", sb);
+    Assert.assertEquals(0, written);
+    sb.setLength(0);
+    EscapeJsonStringAppendableWrapper escaper = new EscapeJsonStringAppendableWrapper(sb);
+    Slf4jMessageFormatter.format(escaper, "bla bla {} {}", appSupp, "\n\u2013\u0010",
+            new int[]{1, 2, 3});
+    LOG.debug("formatted message: {}", sb);
+    Assert.assertEquals("bla bla \\n–\\u0010 [1, 2, 3]", sb.toString());
+    appSupp.replace(CoreTextMediaType.TEXT_PLAIN,
+            String.class, (final ObjectAppender<? super String> input) -> new ObjectAppender<String>() {
+      @Override
+      public void append(final String object, final Appendable appendTo) throws IOException {
+        try (AppendableLimiterWithOverflow limiter
+                = new AppendableLimiterWithOverflow(90, File.createTempFile("string", ".overflow"),
+                        "...@", StandardCharsets.UTF_8, appendTo)) {
+          limiter.append(object);
+        }
+      }
+    });
+    sb.setLength(0);
+    Slf4jMessageFormatter.format(sb, "bla bla {}", appSupp,
+            "012345678901234567890123456789012345678901234567"
+                    + "89012345678901234567890123456789012345678901234567890123456789");
+    LOG.debug("formatted message: {}", sb);
+    Assert.assertThat(sb.toString(), Matchers.containsString("...@"));
+  }
 
+  @Test
+  @SuppressFBWarnings({ "LO_INCORRECT_NUMBER_OF_ANCHOR_PARAMETERS", "UCC_UNRELATED_COLLECTION_CONTENTS" })
+  public void testFormatterRecursion() throws IOException {
+    StringBuilder builder = new StringBuilder();
+    Object[] arr = new Object[4];
+    arr[0] = "a";
+    arr[1] = arr;
+    arr[2] = "b";
+    arr[3] = arr;
+    Slf4jMessageFormatter.format(builder, "{} {}", (Object) arr, arr);
+    LOG.debug("", builder);
+    Assert.assertEquals("[a, [...], b, [...]] [a, [...], b, [...]]", builder.toString());
+  }
 
 }

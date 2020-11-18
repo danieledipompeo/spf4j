@@ -32,9 +32,9 @@
 package org.spf4j.base;
 
 
-import com.google.common.base.Preconditions;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.nio.ByteBuffer;
@@ -47,8 +47,6 @@ import java.nio.charset.CodingErrorAction;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import javax.annotation.Nonnull;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 //CHECKSTYLE:OFF
 import sun.nio.cs.ArrayDecoder;
 import sun.nio.cs.ArrayEncoder;
@@ -56,6 +54,9 @@ import sun.nio.cs.ArrayEncoder;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.nio.charset.StandardCharsets;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.annotation.Nullable;
 
 /**
  *
@@ -64,8 +65,9 @@ import java.nio.charset.StandardCharsets;
 @SuppressFBWarnings("IICU_INCORRECT_INTERNAL_CLASS_USE")
 public final class Strings {
 
-  private static final Logger LOG = LoggerFactory.getLogger(Strings.class);
-
+  /**
+   * This field is byte[] in JDK11.
+   */
   private static final MethodHandle CHARS_FIELD_GET;
 
   //String(char[] value, boolean share) {
@@ -96,24 +98,7 @@ public final class Strings {
                           })
           );
 
-  private static final char[] DIGITS = {
-    '0', '1', '2', '3', '4', '5',
-    '6', '7', '8', '9', 'a', 'b',
-    'c', 'd', 'e', 'f', 'g', 'h',
-    'i', 'j', 'k', 'l', 'm', 'n',
-    'o', 'p', 'q', 'r', 's', 't',
-    'u', 'v', 'w', 'x', 'y', 'z'
-  };
 
-  private static final ThreadLocal<char[]> BUFF = new ThreadLocal<char[]>() {
-
-    @Override
-    @SuppressFBWarnings("SUA_SUSPICIOUS_UNINITIALIZED_ARRAY")
-    protected char[] initialValue() {
-      return new char[64];
-    }
-
-  };
 
   private static final boolean LENIENT_CODING = Boolean.getBoolean("spf4j.encoding.lenient");
 
@@ -146,7 +131,8 @@ public final class Strings {
     return CharSequences.distance(s1, s2);
   }
 
-  public static String unescape(final String what) {
+  @Nullable
+  public static String unescape(@Nullable final String what) {
     return UNESCAPE_JAVA.translate(what);
   }
 
@@ -203,14 +189,16 @@ public final class Strings {
           charsField = String.class.getDeclaredField("value");
           charsField.setAccessible(true);
         } catch (NoSuchFieldException ex) {
-          LOG.info("char array stealing from String not supported", ex);
+          Logger logger = Logger.getLogger(Strings.class.getName());
+          logger.warning("char array stealing from String not supported");
+          logger.log(Level.FINEST, "Exception detail", ex);
           charsField = null;
         }
         return charsField;
       }
     });
     MethodHandles.Lookup lookup = MethodHandles.lookup();
-    if (charsField != null) {
+    if (charsField != null && char[].class == charsField.getType()) {
       try {
         CHARS_FIELD_GET = lookup.unreflectGetter(charsField);
       } catch (IllegalAccessException ex) {
@@ -236,7 +224,9 @@ public final class Strings {
             constr.setAccessible(true);
           } catch (NoSuchMethodException ex2) {
             ex2.addSuppressed(ex);
-            LOG.info("building String from char[] fast not supported", ex2);
+            Logger logger = Logger.getLogger(Strings.class.getName());
+            logger.log(Level.FINE, "Building String from char[] without copy not supported");
+            logger.log(Level.FINEST, "Exception detail", ex2);
             constr = null;
           }
         }
@@ -395,7 +385,7 @@ public final class Strings {
         cr.throwException();
       }
     } catch (CharacterCodingException x) {
-      throw new Error(x);
+      throw new UncheckedIOException(x);
     }
     return new String(ca, 0, cb.position());
   }
@@ -470,170 +460,57 @@ public final class Strings {
    * @param toEscape - the java string to escape.
    * @param jsonString - the destination json String builder.
    */
+  @Deprecated
   public static void escapeJsonString(@Nonnull final String toEscape, final StringBuilder jsonString) {
-
-    int len = toEscape.length();
-    for (int i = 0; i < len; i++) {
-      char c = toEscape.charAt(i);
-      appendJsonStringEscapedChar(c, jsonString);
-    }
-
+    AppendableUtils.escapeJsonString(toEscape, jsonString);
   }
 
-  public static void escapeJsonString(@Nonnull final String toEscape, final Appendable jsonString) throws IOException {
-    int len = toEscape.length();
-    for (int i = 0; i < len; i++) {
-      char c = toEscape.charAt(i);
-      appendJsonStringEscapedChar(c, jsonString);
-    }
+  @Deprecated
+  public static void escapeJsonString(@Nonnull final String toEscape, final Appendable jsonString)
+          throws IOException {
+    AppendableUtils.escapeJsonString(toEscape, jsonString);
   }
 
+  @Deprecated
   public static void appendJsonStringEscapedChar(final char c, final StringBuilder jsonString) {
-    switch (c) {
-      case '\\':
-      case '"':
-        jsonString.append('\\');
-        jsonString.append(c);
-        break;
-      case '\b':
-        jsonString.append("\\b");
-        break;
-      case '\t':
-        jsonString.append("\\t");
-        break;
-      case '\n':
-        jsonString.append("\\n");
-        break;
-      case '\f':
-        jsonString.append("\\f");
-        break;
-      case '\r':
-        jsonString.append("\\r");
-        break;
-      default:
-        if (c < ' ') {
-          jsonString.append("\\u");
-          appendUnsignedStringPadded(jsonString, (int) c, 4, 4);
-        } else {
-          jsonString.append(c);
-        }
-    }
+    AppendableUtils.appendJsonStringEscapedChar(c, jsonString);
   }
 
+  @Deprecated
   public static void appendJsonStringEscapedChar(final char c, final Appendable jsonString) throws IOException {
-    switch (c) {
-      case '\\':
-      case '"':
-        jsonString.append('\\');
-        jsonString.append(c);
-        break;
-      case '\b':
-        jsonString.append("\\b");
-        break;
-      case '\t':
-        jsonString.append("\\t");
-        break;
-      case '\n':
-        jsonString.append("\\n");
-        break;
-      case '\f':
-        jsonString.append("\\f");
-        break;
-      case '\r':
-        jsonString.append("\\r");
-        break;
-      default:
-        if (c < ' ') {
-          jsonString.append("\\u");
-          appendUnsignedStringPadded(jsonString, (int) c, 4, 4);
-        } else {
-          jsonString.append(c);
-        }
-    }
+    AppendableUtils.appendJsonStringEscapedChar(c, jsonString);
   }
 
+  @Deprecated
   public static void appendUnsignedString(final StringBuilder sb, final long nr, final int shift) {
-    long i = nr;
-    char[] buf = BUFF.get();
-    int charPos = 64;
-    int radix = 1 << shift;
-    long mask = radix - 1;
-    do {
-      buf[--charPos] = DIGITS[(int) (i & mask)];
-      i >>>= shift;
-    } while (i != 0);
-    sb.append(buf, charPos, 64 - charPos);
+    AppendableUtils.appendUnsignedString(sb, nr, shift);
   }
 
+  @Deprecated
   public static void appendUnsignedString(final StringBuilder sb, final int nr, final int shift) {
-    long i = nr;
-    char[] buf = BUFF.get();
-    int charPos = 32;
-    int radix = 1 << shift;
-    long mask = radix - 1;
-    do {
-      buf[--charPos] = DIGITS[(int) (i & mask)];
-      i >>>= shift;
-    } while (i != 0);
-    sb.append(buf, charPos, 32 - charPos);
+    AppendableUtils.appendUnsignedString(sb, nr, shift);
   }
 
+  @Deprecated
   public static void appendUnsignedStringPadded(final StringBuilder sb, final int nr, final int shift,
           final int padTo) {
-    long i = nr;
-    char[] buf = BUFF.get();
-    int charPos = 32;
-    int radix = 1 << shift;
-    long mask = radix - 1;
-    do {
-      buf[--charPos] = DIGITS[(int) (i & mask)];
-      i >>>= shift;
-    } while (i != 0);
-    final int nrChars = 32 - charPos;
-    if (nrChars > padTo) {
-      throw new IllegalArgumentException("Your pad to value " + padTo
-              + " is to small, must be at least " + nrChars);
-    } else {
-      for (int j = 0, n = padTo - nrChars; j < n; j++) {
-        sb.append('0');
-      }
-    }
-    sb.append(buf, charPos, nrChars);
+    AppendableUtils.appendUnsignedStringPadded(sb, nr, shift, padTo);
   }
 
+  @Deprecated
   public static void appendUnsignedStringPadded(final Appendable sb, final int nr, final int shift,
           final int padTo) throws IOException {
-    long i = nr;
-    char[] buf = BUFF.get();
-    int charPos = 32;
-    int radix = 1 << shift;
-    long mask = radix - 1;
-    do {
-      buf[--charPos] = DIGITS[(int) (i & mask)];
-      i >>>= shift;
-    } while (i != 0);
-    final int nrChars = 32 - charPos;
-    if (nrChars > padTo) {
-      throw new IllegalArgumentException("Your pad to value " + padTo
-              + " is to small, must be at least " + nrChars);
-    } else {
-      for (int j = 0, n = padTo - nrChars; j < n; j++) {
-        sb.append('0');
-      }
-    }
-    sb.append(CharBuffer.wrap(buf), charPos, charPos + nrChars);
+    AppendableUtils.appendUnsignedStringPadded(sb, nr, shift, padTo);
   }
 
+  @Deprecated
   public static void appendSpaces(final Appendable to, final int nrSpaces) throws IOException {
-    for (int i = 0; i < nrSpaces; i++) {
-      to.append(' ');
-    }
+    AppendableUtils.appendSpaces(to, nrSpaces);
   }
 
+  @Deprecated
   public static void appendSpaces(final StringBuilder to, final int nrSpaces) {
-    for (int i = 0; i < nrSpaces; i++) {
-      to.append(' ');
-    }
+    AppendableUtils.appendSpaces(to, nrSpaces);
   }
 
   /**
@@ -654,13 +531,15 @@ public final class Strings {
   }
 
   @Nonnull
-  public static String commonPrefix(@Nonnull final String... strs) {
-    Preconditions.checkArgument(strs.length > 0, "Must have at least 1 string %s", strs);
-    String common = strs[0];
+  public static String commonPrefix(@Nonnull final CharSequence... strs) {
+    if (strs.length <= 0) {
+      throw new IllegalArgumentException("Must have at least 1 string " + java.util.Arrays.toString(strs));
+     }
+    CharSequence common = strs[0];
     for (int i = 1; i < strs.length; i++) {
       common = com.google.common.base.Strings.commonPrefix(common, strs[i]);
     }
-    return common;
+    return common.toString();
   }
 
 }

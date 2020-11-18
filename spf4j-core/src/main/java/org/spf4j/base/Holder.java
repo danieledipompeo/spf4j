@@ -32,13 +32,13 @@
 package org.spf4j.base;
 
 /**
- *
+ * Type holder, supports holding nulls. (unlike optional)
  * @author zoly
  */
 public final  class Holder<T> {
 
     public static final Holder OF_NULL = Holder.of(null);
-  
+
     private final T value;
 
     public Holder(final T value) {

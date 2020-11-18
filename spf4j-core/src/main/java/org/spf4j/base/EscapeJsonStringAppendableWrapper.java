@@ -32,23 +32,25 @@
 package org.spf4j.base;
 
 import java.io.IOException;
+import javax.annotation.Nullable;
 
 /**
  *
  * @author zoly
  */
 public final class EscapeJsonStringAppendableWrapper implements Appendable {
-  
+
   private final Appendable wrapped;
 
   public EscapeJsonStringAppendableWrapper(final Appendable wrapped) {
     this.wrapped = wrapped;
   }
-  
+
   @Override
-  public Appendable append(final CharSequence csq) throws IOException {
+  public Appendable append(@Nullable final CharSequence pcsq) throws IOException {
+    CharSequence csq = pcsq == null ? "null" : pcsq;
     for (int i = 0, l = csq.length(); i < l; i++) {
-      Strings.appendJsonStringEscapedChar(csq.charAt(i), wrapped);
+      AppendableUtils.appendJsonStringEscapedChar(csq.charAt(i), wrapped);
     }
     return this;
   }
@@ -56,14 +58,14 @@ public final class EscapeJsonStringAppendableWrapper implements Appendable {
   @Override
   public Appendable append(final CharSequence csq, final int start, final int end) throws IOException {
     for (int i = start; i < end; i++) {
-      Strings.appendJsonStringEscapedChar(csq.charAt(i), wrapped);
+      AppendableUtils.appendJsonStringEscapedChar(csq.charAt(i), wrapped);
     }
     return this;
   }
 
   @Override
   public Appendable append(final char c) throws IOException {
-     Strings.appendJsonStringEscapedChar(c, wrapped);
+     AppendableUtils.appendJsonStringEscapedChar(c, wrapped);
      return this;
   }
 
@@ -71,5 +73,5 @@ public final class EscapeJsonStringAppendableWrapper implements Appendable {
   public String toString() {
     return "EscapeJsonStringAppendableWrapper{" + "wrapped=" + wrapped + '}';
   }
-  
+
 }

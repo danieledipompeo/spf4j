@@ -36,13 +36,18 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLTimeoutException;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import javax.annotation.Nonnegative;
+import javax.annotation.Signed;
 import javax.sql.DataSource;
-import org.spf4j.base.CallablesNano;
-import org.spf4j.base.CallablesNanoNonInterrupt;
+import org.spf4j.base.ExecutionContext;
+import org.spf4j.base.ExecutionContexts;
 import org.spf4j.base.HandlerNano;
 import org.spf4j.base.JavaUtils;
+import org.spf4j.base.TimeSource;
+import org.spf4j.failsafe.RetryPolicy;
 
 /**
  * A very simple JdbTemplate.
@@ -52,10 +57,27 @@ import org.spf4j.base.JavaUtils;
 @Beta
 public final class JdbcTemplate {
 
+  /**
+   * certain JDBC drivers multiply timeout to transform in milis or nanos without validating overflow.
+   * This value needs to be low enough to account for this case.
+   */
+  private static final int MAX_JDBC_TIMEOUTSECONDS =
+          Integer.getInteger("spf4j.jdbc.maxdbcTimeoutSeconds", 3600 * 24);
+
+
   private final DataSource dataSource;
 
+  private final RetryPolicy<Object, Callable<? extends Object>> retryPolicy;
+
   public JdbcTemplate(final DataSource dataSource) {
+    this(dataSource, RetryPolicy.newBuilder()
+            .withDefaultThrowableRetryPredicate()
+            .build());
+  }
+
+  public JdbcTemplate(final DataSource dataSource, final RetryPolicy<Object, Callable<? extends Object>> retryPolicy) {
     this.dataSource = dataSource;
+    this.retryPolicy = retryPolicy;
   }
 
   public static void checkJdbcObjectName(final CharSequence name) {
@@ -64,65 +86,27 @@ public final class JdbcTemplate {
     }
   }
 
+  public <R> R transactOnConnection(final HandlerNano<Connection, R, SQLException> handler,
+          final long timeout, final TimeUnit tu) throws SQLException, InterruptedException {
+    return transactOnConnection(handler, ExecutionContexts.computeDeadline(timeout, tu));
+  }
+
 
   @SuppressFBWarnings("BED_BOGUS_EXCEPTION_DECLARATION")
   public <R> R transactOnConnection(final HandlerNano<Connection, R, SQLException> handler,
-          final long timeout, final TimeUnit tu)
+           final long deadlineNanos)
           throws SQLException, InterruptedException {
-    try {
-      return CallablesNano.executeWithRetry(
-              new CallablesNano.NanoTimeoutCallable<R, SQLException>(tu.toNanos(timeout)) {
-
-                @Override
-                // CHECKSTYLE IGNORE RedundantThrows FOR NEXT 100 LINES
-                @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
-                public R call(final long deadlineNanos)
-                        throws SQLException {
-                  try (Connection conn = dataSource.getConnection()) {
-                    boolean autocomit = conn.getAutoCommit();
-                    if (autocomit) {
-                      conn.setAutoCommit(false);
-                    }
-                    try {
-                      R result = handler.handle(conn, deadlineNanos);
-                      conn.commit();
-                      return result;
-                    } catch (SQLException | RuntimeException ex) {
-                      conn.rollback();
-                      throw ex;
-                    } finally {
-                      if (autocomit) {
-                        conn.setAutoCommit(true);
-                      }
-                    }
-                  }
-                }
-              }, 2, 1000, SQLException.class);
-    } catch (TimeoutException ex) {
-      throw new SQLTimeoutException(ex);
-    }
-
-  }
-
-  @SuppressFBWarnings("BED_BOGUS_EXCEPTION_DECLARATION")
-  public <R> R transactOnConnectionNonInterrupt(final HandlerNano<Connection, R, SQLException> handler,
-          final long timeout, final TimeUnit tu)
-          throws SQLException {
-      return CallablesNanoNonInterrupt.executeWithRetry(
-              new CallablesNano.NanoTimeoutCallable<R, SQLException>(tu.toNanos(timeout)) {
-
+    try (ExecutionContext ctx = ExecutionContexts.start(handler.toString(), deadlineNanos)) {
+      return (R) retryPolicy.call(new Callable() {
         @Override
-        // CHECKSTYLE IGNORE RedundantThrows FOR NEXT 100 LINES
-        @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
-        public R call(final long deadlineNanos)
-                throws SQLException {
+        public R call() throws SQLException {
           try (Connection conn = dataSource.getConnection()) {
             boolean autocomit = conn.getAutoCommit();
             if (autocomit) {
               conn.setAutoCommit(false);
             }
             try {
-              R result = handler.handle(conn, deadlineNanos);
+              R result = handler.handle(conn, ctx.getDeadlineNanos());
               conn.commit();
               return result;
             } catch (SQLException | RuntimeException ex) {
@@ -135,7 +119,56 @@ public final class JdbcTemplate {
             }
           }
         }
-      }, 2, 1000, SQLException.class);
+      }, SQLException.class, ctx.getDeadlineNanos());
+    } catch (TimeoutException ex) {
+      throw new SQLTimeoutException(ex);
+    }
+  }
+
+  @SuppressFBWarnings("BED_BOGUS_EXCEPTION_DECLARATION")
+  public <R> R transactOnConnectionNonInterrupt(final HandlerNano<Connection, R, SQLException> handler,
+          final long timeout, final TimeUnit tu)
+          throws SQLException {
+    try {
+      return transactOnConnection(handler, timeout, tu);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new SQLException(ex);
+    }
+  }
+
+
+  /**
+   * @param deadlineNanos the deadline relative to the same as System.nanoTime()
+   * @return
+   */
+  @Nonnegative
+  public static int getTimeoutToDeadlineSeconds(final long deadlineNanos) throws SQLTimeoutException {
+    long toSeconds = TimeUnit.NANOSECONDS.toSeconds(deadlineNanos - TimeSource.nanoTime());
+    if (toSeconds < 0L) {
+      throw new SQLTimeoutException("deadline exceeded by " + (-toSeconds) + " seconds");
+    }
+    if (toSeconds == 0) {
+      return 1;
+    }
+    if (toSeconds > MAX_JDBC_TIMEOUTSECONDS) {
+      return MAX_JDBC_TIMEOUTSECONDS;
+    } else {
+     return (int) toSeconds;
+    }
+  }
+
+  @Signed
+  public static int getTimeoutToDeadlineSecondsNoEx(final long deadlineNanos) {
+    long toSeconds = TimeUnit.NANOSECONDS.toSeconds(deadlineNanos - TimeSource.nanoTime());
+    if (toSeconds == 0) {
+      return 1;
+    }
+    if (toSeconds > MAX_JDBC_TIMEOUTSECONDS) {
+      return MAX_JDBC_TIMEOUTSECONDS;
+    } else {
+     return (int) toSeconds;
+    }
   }
 
   @Override

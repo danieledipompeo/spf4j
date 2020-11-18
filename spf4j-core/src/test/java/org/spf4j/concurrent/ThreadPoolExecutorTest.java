@@ -41,6 +41,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * test to validate the behavior between spf4j and FJP implementations...
@@ -48,10 +50,11 @@ import org.junit.Test;
  */
 public class ThreadPoolExecutorTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(ThreadPoolExecutorTest.class);
 
   @Test(timeout = 10000)
   public void testInteruptionBehavior() throws InterruptedException, ExecutionException {
-    LifoThreadPoolExecutorSQP executor = new LifoThreadPoolExecutorSQP("test", 0, 16, 60000, 0, 1024);
+    LifoThreadPoolExecutorSQP executor = new LifoThreadPoolExecutorSQP("test", 0, 16, 60000, 0);
     testPoolTaskCancellation(executor);
   }
 
@@ -61,13 +64,14 @@ public class ThreadPoolExecutorTest {
     try {
       testPoolTaskCancellation(new ForkJoinPool(16));
     } catch (AssertionError err) {
-      System.err.println("expected " + err);
+      LOG.debug("Expected error", err);
       assertError = true;
     }
     Assert.assertTrue("expected that FJP tasks cannot be interrupted", assertError);
   }
 
-  public void testPoolTaskCancellation(ExecutorService executor) throws InterruptedException, ExecutionException {
+  public static void testPoolTaskCancellation(final ExecutorService executor)
+          throws InterruptedException, ExecutionException {
     RunnableImpl testRunnable = new RunnableImpl();
     Future<?> submit = executor.submit(testRunnable);
     Assert.assertTrue("task did not start", testRunnable.getStartedlatch().await(5, TimeUnit.SECONDS));
@@ -104,17 +108,10 @@ public class ThreadPoolExecutorTest {
       return interruptedLatch;
     }
 
-
-
-
     public CountDownLatch getStartedlatch() {
       return startedlatch;
     }
 
-
-
-
   }
-
 
 }

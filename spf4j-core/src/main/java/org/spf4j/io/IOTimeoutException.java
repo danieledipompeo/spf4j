@@ -32,7 +32,10 @@
 package org.spf4j.io;
 
 import java.io.IOException;
-import org.joda.time.format.ISODateTimeFormat;
+import java.time.Instant;
+import java.util.concurrent.TimeUnit;
+import org.spf4j.base.DateTimeFormats;
+import org.spf4j.base.Timing;
 
 /**
  *
@@ -41,23 +44,33 @@ import org.joda.time.format.ISODateTimeFormat;
 public class IOTimeoutException extends IOException {
 
 
-    private final long deadline;
+    private final long deadlineNanos;
 
-    private final long millisAfterDeadline;
+    private final long nanosAfterDeadline;
 
-    public IOTimeoutException(final long deadline, final long millisAfterDeadline) {
-        super("Timeout encountered, " + millisAfterDeadline + " ms after deadline: "
-                + ISODateTimeFormat.dateTime().print(deadline));
-        this.deadline = deadline;
-        this.millisAfterDeadline = deadline;
+    public IOTimeoutException(final long deadlineNanos, final long nanosAfterDeadline) {
+        super("Timeout encountered, " + nanosAfterDeadline + " ns after deadline: "
+                + DateTimeFormats.TS_FORMAT.format(
+                        Instant.ofEpochMilli(Timing.getCurrentTiming().fromNanoTimeToEpochMillis(deadlineNanos))));
+        this.deadlineNanos = deadlineNanos;
+        this.nanosAfterDeadline = nanosAfterDeadline;
     }
 
+    @Deprecated
     public final long getDeadline() {
-        return deadline;
+        return deadlineNanos;
+    }
+
+    public final long getDeadlineNanos() {
+        return deadlineNanos;
     }
 
     public final long getMillisAfterDeadline() {
-        return millisAfterDeadline;
+      return TimeUnit.NANOSECONDS.toMillis(nanosAfterDeadline);
+    }
+
+    public final long getNanosAfterDeadline() {
+        return nanosAfterDeadline;
     }
 
 

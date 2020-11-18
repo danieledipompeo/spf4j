@@ -35,7 +35,7 @@ import com.google.common.cache.CacheLoader;
 import com.google.common.cache.CacheStats;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.util.concurrent.UncheckedExecutionException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.Map;
@@ -45,8 +45,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutionException;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.spf4j.base.MemorizedCallable;
+import org.spf4j.base.Callables;
+import org.spf4j.base.UncheckedExecutionException;
 
 /**
  *
@@ -92,12 +94,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   public V get(final K key) throws ExecutionException {
     Callable<? extends V> existingValHolder = map.get(key);
     if (existingValHolder == null) {
-      Callable<? extends V> newHolder = new MemorizedCallable(new Callable<V>() {
-        @Override
-        public V call() throws Exception {
-          return loader.load(key);
-        }
-      });
+      Callable<? extends V> newHolder = Callables.memorized(() -> loader.load(key));
       existingValHolder = map.putIfAbsent(key, newHolder);
       if (existingValHolder == null) {
         existingValHolder = newHolder;
@@ -121,6 +118,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   }
 
   @Override
+  @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
   public ImmutableMap<K, V> getAll(final Iterable<? extends K> keys) throws ExecutionException {
     ImmutableMap.Builder<K, V> builder = ImmutableMap.builder();
     for (K key : keys) {
@@ -130,17 +128,20 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   }
 
   @Override
+  @SuppressFBWarnings("NP_PARAMETER_MUST_BE_NONNULL_BUT_MARKED_AS_NULLABLE")
   public V apply(final K key) {
-    if (key == null) {
-      throw new IllegalArgumentException("key cannot be null for " + this);
-    } else {
-      return getUnchecked(key);
-    }
+    return getUnchecked(key);
   }
 
   @Override
   public void refresh(final K key) {
-    getUnchecked(key);
+    Callable<? extends V> newHolder = Callables.memorized(new Callable<V>() {
+      @Override
+      public V call() throws Exception {
+        return loader.load(key);
+      }
+    });
+    map.put(key, newHolder);
   }
 
   @Override
@@ -149,6 +150,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   }
 
   @Override
+  @Nullable
   public V getIfPresent(final Object key) {
     Callable<? extends V> existingValHolder = map.get(key);
     if (existingValHolder != null) {
@@ -166,7 +168,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   public V get(final K key, final Callable<? extends V> valueLoader) throws ExecutionException {
     Callable<? extends V> existingValHolder = map.get(key);
     if (existingValHolder == null) {
-      Callable<? extends V> newHolder = new MemorizedCallable(valueLoader);
+      Callable<? extends V> newHolder = Callables.memorized(valueLoader);
       existingValHolder = map.putIfAbsent(key, newHolder);
       if (existingValHolder == null) {
         existingValHolder = newHolder;
@@ -180,6 +182,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   }
 
   @Override
+  @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
   public ImmutableMap<K, V> getAllPresent(final Iterable<?> keys) {
     ImmutableMap.Builder<K, V> builder = ImmutableMap.builder();
     for (K key : (Iterable<K>) keys) {
@@ -193,7 +196,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
 
   @Override
   public void put(final K key, final V value) {
-    map.put(key, (Callable<V>) () -> value);
+    map.put(key, Callables.constant(value));
   }
 
   @Override
@@ -231,6 +234,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
   }
 
   @Override
+  @SuppressFBWarnings("NM_CONFUSING")
   public void cleanUp() {
     map.clear();
   }
@@ -248,7 +252,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
 
     @Override
     public V putIfAbsent(final K key, final V value) {
-      Callable<? extends V> result = map.putIfAbsent(key, () -> value);
+      Callable<? extends V> result = map.putIfAbsent(key, Callables.constant(value));
       try {
         return result == null ? null : result.call();
       } catch (Exception ex) {
@@ -303,7 +307,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
 
     @Override
     public V put(final K key, final V value) {
-      Callable<? extends V> result = map.put(key, () -> value);
+      Callable<? extends V> result = map.put(key, Callables.constant(value));
       try {
         return result == null ? null : result.call();
       } catch (Exception ex) {
@@ -324,7 +328,7 @@ public final class UnboundedLoadingCache<K, V> implements LoadingCache<K, V> {
     @Override
     public void putAll(final Map<? extends K, ? extends V> m) {
       for (Map.Entry<? extends K, ? extends V> entry : m.entrySet()) {
-        map.put(entry.getKey(), () -> entry.getValue());
+        map.put(entry.getKey(), entry::getValue);
       }
     }
 

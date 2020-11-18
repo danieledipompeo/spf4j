@@ -37,11 +37,11 @@ import gnu.trove.map.hash.TLongObjectHashMap;
 import gnu.trove.map.hash.TObjectLongHashMap;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import org.spf4j.base.Throwables;
 import org.spf4j.perf.MeasurementsInfo;
 import org.spf4j.perf.MeasurementStore;
+import org.spf4j.perf.MeasurementStoreQuery;
 
 /**
  *
@@ -77,11 +77,10 @@ public final class MultiStore implements MeasurementStore {
           try {
             ids[i++] = store.alocateMeasurements(measurement, sampleTimeMillis);
           } catch (IOException e) {
-            if (ex == null) {
-              ex = e;
-            } else {
-              ex = Throwables.suppress(e, ex);
+            if (ex != null) {
+              Throwables.suppressLimited(e, ex);
             }
+            ex = e;
           }
         }
         if (ex != null) {
@@ -111,11 +110,10 @@ public final class MultiStore implements MeasurementStore {
       try {
         store.saveMeasurements(ids[i++], timeStampMillis, measurements);
       } catch (IOException e) {
-        if (ex == null) {
-          ex = e;
-        } else {
-          ex = Throwables.suppress(e, ex);
+        if (ex != null) {
+          Throwables.suppressLimited(e, ex);
         }
+        ex = e;
       }
     }
     if (ex != null) {
@@ -130,11 +128,10 @@ public final class MultiStore implements MeasurementStore {
       try {
         store.flush();
       } catch (IOException e) {
-        if (ex == null) {
-          ex = e;
-        } else {
-          ex = Throwables.suppress(e, ex);
+        if (ex != null) {
+          Throwables.suppressLimited(e, ex);
         }
+        ex = e;
       }
     }
     if (ex != null) {
@@ -149,11 +146,10 @@ public final class MultiStore implements MeasurementStore {
       try {
         store.close();
       } catch (IOException e) {
-        if (ex == null) {
-          ex = e;
-        } else {
-          ex = Throwables.suppress(e, ex);
+        if (ex != null) {
+          Throwables.suppressLimited(e, ex);
         }
+        ex = e;
       }
     }
     if (ex != null) {
@@ -162,12 +158,24 @@ public final class MultiStore implements MeasurementStore {
   }
 
   public List<MeasurementStore> getStores() {
-    return Collections.unmodifiableList(Arrays.asList(stores));
+    return Arrays.asList(stores);
   }
 
   @Override
   public String toString() {
     return "MultiStore{" + "stores=" + Arrays.toString(stores) + '}';
   }
+
+  @Override
+  public MeasurementStoreQuery query() {
+    for (MeasurementStore store : stores) {
+      MeasurementStoreQuery query = store.query();
+      if (query != null) {
+        return query;
+      }
+    }
+    return null;
+  }
+
 
 }

@@ -38,6 +38,7 @@ import org.spf4j.recyclable.RecyclingSupplier;
 import org.spf4j.recyclable.Scanable;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import javax.annotation.Nonnull;
 import org.spf4j.base.Handler;
 
 /**
@@ -56,7 +57,7 @@ public final class RecyclingSupplierBuilder<T> {
     private int initialSize;
     private boolean collectBorrowed;
 
-    public RecyclingSupplierBuilder(final int maxSize, final RecyclingSupplier.Factory<T> factory) {
+    public RecyclingSupplierBuilder(final int maxSize, @Nonnull final RecyclingSupplier.Factory<T> factory) {
         this.fair = true;
         this.maxSize = maxSize;
         this.factory = factory;
@@ -72,7 +73,7 @@ public final class RecyclingSupplierBuilder<T> {
         this.initialSize = pinitialSize;
         return this;
     }
-    
+
 
     public RecyclingSupplierBuilder<T> withMaintenance(final ScheduledExecutorService pexec,
             final long pmaintenanceIntervalMillis, final boolean pcollectBorrowed) {
@@ -102,18 +103,18 @@ public final class RecyclingSupplierBuilder<T> {
             pool = underlyingPool;
         }
         if (maintenanceExecutor != null) {
-            maintenanceExecutor.scheduleWithFixedDelay(new AbstractRunnableImpl<>(underlyingPool, collectBorrowed),
+            maintenanceExecutor.scheduleWithFixedDelay(new MaintenanceRunner<>(underlyingPool, collectBorrowed),
                     maintenanceIntervalMillis, maintenanceIntervalMillis, TimeUnit.MILLISECONDS);
         }
         return pool;
     }
 
-     static final class AbstractRunnableImpl<T> extends AbstractRunnable {
+    private static final class MaintenanceRunner<T> extends AbstractRunnable {
 
         private final ScalableObjectPool<T> underlyingPool;
         private final boolean collectBorrowed;
 
-        AbstractRunnableImpl(final ScalableObjectPool<T> underlyingPool, final boolean collectBorrowed) {
+        MaintenanceRunner(final ScalableObjectPool<T> underlyingPool, final boolean collectBorrowed) {
             super(true);
             this.underlyingPool = underlyingPool;
             this.collectBorrowed = collectBorrowed;
@@ -131,7 +132,7 @@ public final class RecyclingSupplierBuilder<T> {
                         return true;
                     }
                 });
-           
+
         }
     }
 

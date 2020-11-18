@@ -34,14 +34,15 @@ package org.spf4j.reflect;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import gnu.trove.set.hash.THashSet;
 import java.lang.reflect.Type;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
+import org.spf4j.base.UncheckedExecutionException;
 import org.spf4j.concurrent.UnboundedLoadingCache;
 
 /**
@@ -106,6 +107,7 @@ public final class CachingTypeMapSupplierWrapper<H, E extends Exception> impleme
 
   @Override
   @SuppressFBWarnings({ "BC_UNCONFIRMED_CAST_OF_RETURN_VALUE", "SPP_USE_ISEMPTY", "LEST_LOST_EXCEPTION_STACK_TRACE" })
+  @Nullable
   public H get(final Type type) throws E {
     Set<H> get;
     try {
@@ -134,7 +136,7 @@ public final class CachingTypeMapSupplierWrapper<H, E extends Exception> impleme
     public Set<H> load(final Type key) throws Exception {
       synchronized (wrapped) {
         Set<ByTypeSupplier<H, E>> all = wrapped.getAll(key);
-        Set<H> result = new HashSet<>(all.size());
+        Set<H> result = new THashSet<>(all.size());
         for (ByTypeSupplier<H, E> s : all) {
           result.add(s.get(key));
         }

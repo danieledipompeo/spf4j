@@ -32,17 +32,16 @@
 package org.spf4j.perf.impl;
 
 import org.spf4j.perf.impl.ms.graphite.GraphiteUdpStore;
-import com.google.common.base.Charsets;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.channels.DatagramChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Future;
@@ -54,35 +53,38 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.base.AbstractRunnable;
-import org.spf4j.perf.MeasurementRecorder;
+import org.spf4j.perf.CloseableMeasurementRecorder;
 import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.tsdb2.avro.MeasurementType;
 
 /**
- *
  * @author zoly
  */
 public final class GraphiteUdpStoreTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(GraphiteUdpStoreTest.class);
 
-  private static final File tsdbtxt;
+  private static volatile boolean terminated = false;
+  private static volatile Future<?> server;
+  private static final BlockingQueue<String> QUEUE = new LinkedBlockingQueue<>();
+
+  private static final File TSDB_TXT;
 
   static {
     File tsdb;
     try {
       tsdb = File.createTempFile("ttt", "tsdb");
-      tsdbtxt = File.createTempFile("ttt", "tsdbtxt");
+      TSDB_TXT = File.createTempFile("ttt", "tsdbtxt");
     } catch (IOException ex) {
       throw new ExceptionInInitializerError(ex);
     }
     System.setProperty("spf4j.perf.ms.config",
-            "TSDB@" + tsdb.getAbsolutePath() + "," + "TSDB_TXT@" + tsdbtxt.getAbsolutePath()
+            "TSDB@" + tsdb.getAbsolutePath() + "," + "TSDB_TXT@" + TSDB_TXT.getAbsolutePath()
             + ",GRAPHITE_UDP@127.0.0.1:1976");
   }
-
-  private static volatile boolean terminated = false;
-  private static volatile Future<?> server;
-  private static final BlockingQueue<String> queue = new LinkedBlockingQueue<>();
 
 
   @Test
@@ -91,23 +93,23 @@ public final class GraphiteUdpStoreTest {
     final GraphiteUdpStore store = new GraphiteUdpStore("127.0.0.1", 1976);
     long id = store.alocateMeasurements(new MeasurementsInfoImpl("bla", "ms",
             new String[]{"val1", "val2", "val3"},
-            new String[]{"ms", "ms", "ms"}), 0);
+            new String[]{"ms", "ms", "ms"}, MeasurementType.UNTYPED), 0);
     store.saveMeasurements(id, 1L, 2L, 3L, 5L);
-    System.out.println("measurements sent");
-    String line = queue.poll(5, TimeUnit.SECONDS);
-    System.out.println("measurements received " + line);
+    LOG.debug("measurements sent: {} {} {} {}", 1L, 2L, 3L, 5L);
+    String line = QUEUE.poll(5, TimeUnit.SECONDS);
+    LOG.debug("measurements received: {} ", line);
     Assert.assertEquals("bla/val1 2 1", line);
-    line = queue.poll(5, TimeUnit.SECONDS);
-    System.out.println("measurements received " + line);
+    line = QUEUE.poll(5, TimeUnit.SECONDS);
+    LOG.debug("measurements received: {} ", line);
     Assert.assertEquals("bla/val2 3 1", line);
-    line = queue.poll(5, TimeUnit.SECONDS);
-    System.out.println("measurements received " + line);
+    line = QUEUE.poll(5, TimeUnit.SECONDS);
+    LOG.debug("measurements received: {} ", line);
     Assert.assertEquals("bla/val3 5 1", line);
   }
 
   @Before
   public void beforeTest() {
-    queue.drainTo(new ArrayList<String>());
+    QUEUE.drainTo(new ArrayList<String>());
   }
 
 
@@ -115,7 +117,7 @@ public final class GraphiteUdpStoreTest {
   @SuppressFBWarnings("MDM_THREAD_YIELD")
   public void testStore() throws InterruptedException, IOException {
 
-    MeasurementRecorder recorder = RecorderFactory.createScalableQuantizedRecorder("test measurement",
+    CloseableMeasurementRecorder recorder = RecorderFactory.createScalableQuantizedRecorder2("test measurement",
             "ms", 1000, 10, 0, 6, 10);
 
     for (int i = 0; i < 100; i++) {
@@ -125,11 +127,11 @@ public final class GraphiteUdpStoreTest {
     recorder.close();
     RecorderFactory.MEASUREMENT_STORE.flush();
 //    RecorderFactory.MEASUREMENT_STORE.close();
-    List<String> lines = Files.readAllLines(tsdbtxt.toPath(), StandardCharsets.UTF_8);
-    System.out.println("measurements = " + lines);
+    List<String> lines = Files.readAllLines(TSDB_TXT.toPath(), StandardCharsets.UTF_8);
+    LOG.debug("measurements = {}", lines);
     Assert.assertThat(lines, Matchers.hasItem(Matchers.allOf(
             Matchers.containsString("Q6_7"), Matchers.containsString("test measurement"))));
-    String line = queue.poll(5, TimeUnit.SECONDS);
+    String line = QUEUE.poll(5, TimeUnit.SECONDS);
     Assert.assertThat(line, Matchers.containsString("test-measurement"));
 
   }
@@ -147,15 +149,22 @@ public final class GraphiteUdpStoreTest {
         ByteBuffer bb = ByteBuffer.allocate(512);
         while (!terminated) {
           bb.rewind();
-          channel.receive(bb);
+          try {
+            channel.receive(bb);
+          } catch (ClosedByInterruptException ex) {
+            // this we receive when we interrupt this exec with server.cancel.
+            break;
+          }
           byte[] rba = new byte[bb.position()];
           bb.rewind();
           bb.get(rba);
-          String receivedString = new String(rba, Charsets.UTF_8);
+          String receivedString = new String(rba, StandardCharsets.UTF_8);
           String[] lines = receivedString.split("\n");
-          System.out.println("Received = " + Arrays.toString(lines));
+          for (int i = 0; i < lines.length; i++) {
+            LOG.debug("{}: {}", i, lines[i]);
+          }
           for (String line : lines) {
-            queue.put(line);
+            QUEUE.put(line);
           }
         }
       }

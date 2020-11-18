@@ -31,15 +31,21 @@
  */
 package org.spf4j.io.proxy;
 
-import com.google.common.base.Charsets;
 import org.spf4j.io.tcp.proxy.ProxyClientHandler;
 import org.spf4j.io.tcp.TcpServer;
 import com.google.common.net.HostAndPort;
+import com.sun.net.httpserver.Headers;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.channels.Selector;
@@ -52,7 +58,11 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.base.AbstractRunnable;
 import org.spf4j.concurrent.DefaultScheduler;
 import org.spf4j.ds.UpdateablePriorityQueue;
@@ -61,78 +71,108 @@ import org.spf4j.io.tcp.ClientHandler;
 import org.spf4j.io.tcp.DeadlineAction;
 import org.spf4j.io.tcp.proxy.Sniffer;
 import org.spf4j.io.tcp.proxy.SnifferFactory;
+import org.spf4j.os.OperatingSystem;
 
 /**
- * https://unix.stackexchange.com/questions/17218/how-long-is-a-tcp-local-socket-address-that-has-been-bound-unavailable-after-clo
+ * https://unix.stackexchange.com/questions/17218/
+ * how-long-is-a-tcp-local-socket-address-that-has-been-bound-unavailable-after-clo
  * https://stackoverflow.com/questions/13838256/java-closing-a-serversocket-and-opening-up-the-port
+ *
  * @author zoly
  */
 @SuppressFBWarnings({"SIC_INNER_SHOULD_BE_STATIC_ANON", "MDM_THREAD_YIELD"})
 public class TcpServerTest {
 
-  private static final String testSite = "charizard.homeunix.net";
+  private static final Logger LOG = LoggerFactory.getLogger(TcpServerTest.class);
+
+  private static final Logger SNIFFER_LOG = LoggerFactory.getLogger(TcpServerTest.class + ".SNIFFER");
+
+  private static final String TEST_SITE = "localhost"; //"charizard.homeunix.net";
+
+  private static final int TEST_PORT = 10999;
+
+  private static HttpServer server;
+
+
+  @BeforeClass
+  public static void createHttpServer() throws IOException {
+    server = HttpServer.create(new InetSocketAddress(TEST_PORT), 0);
+    server.createContext("/", new HttpHandler() {
+      @Override
+      public void handle(final HttpExchange he) throws IOException {
+        Headers respHeaders = he.getResponseHeaders();
+        respHeaders.add("testheader", "testValue");
+        he.sendResponseHeaders(200, 0);
+        OutputStream responseBody = he.getResponseBody();
+        responseBody.write("Some Body".getBytes(StandardCharsets.UTF_8));
+        responseBody.close();
+      }
+    });
+    server.start();
+  }
+
+  public static void stopHttpServer() {
+    server.stop(3);
+  }
+
+
 
   private SnifferFactory printSnifferFactory = new SnifferFactory() {
-      @Override
-      public Sniffer get(SocketChannel channel) {
-        return new Sniffer() {
+    @Override
+    public Sniffer get(final SocketChannel channel) {
+      return new Sniffer() {
 
-          CharsetDecoder asciiDecoder = Charsets.US_ASCII.newDecoder();
 
-          @Override
-          public int received(ByteBuffer data, int nrBytes) {
-            // Naive printout using ASCII
-            if (nrBytes < 0) {
-              System.err.println("EOF");
-              return nrBytes;
-            }
-            ByteBuffer duplicate = data.duplicate();
-            duplicate.position(data.position() - nrBytes);
-            duplicate = duplicate.slice();
-            duplicate.position(nrBytes);
-            duplicate.flip();
-            CharBuffer cb = CharBuffer.allocate((int) (asciiDecoder.maxCharsPerByte() * duplicate.limit()));
-            asciiDecoder.decode(duplicate, cb, true);
-            cb.flip();
-            System.err.print(cb.toString());
+        private final CharsetDecoder asciiDecoder = StandardCharsets.US_ASCII.newDecoder();
+
+        @Override
+        public int received(final ByteBuffer data, final int nrBytes) {
+          // Naive printout using ASCII
+          if (nrBytes < 0) {
+            SNIFFER_LOG.debug("EOF");
             return nrBytes;
           }
+          ByteBuffer duplicate = data.duplicate();
+          duplicate.position(data.position() - nrBytes);
+          duplicate = duplicate.slice();
+          duplicate.position(nrBytes);
+          duplicate.flip();
+          CharBuffer cb = CharBuffer.allocate((int) (asciiDecoder.maxCharsPerByte() * duplicate.limit()));
+          asciiDecoder.decode(duplicate, cb, true);
+          cb.flip();
+          SNIFFER_LOG.debug(cb.toString());
+          return nrBytes;
+        }
 
-          @Override
-          public IOException received(IOException ex) {
-            return ex;
-          }
-        };
-      }
-    };
+      };
+    }
+  };
 
-
-
-  @Test(timeout = 1000000)
+  @Test(timeout = 100000)
   public void testProxy() throws IOException, InterruptedException {
     ForkJoinPool pool = new ForkJoinPool(1024);
     try (TcpServer server = new TcpServer(pool,
-            new ProxyClientHandler(HostAndPort.fromParts(testSite, 80), printSnifferFactory,
+            new ProxyClientHandler(HostAndPort.fromParts(TEST_SITE, TEST_PORT), printSnifferFactory,
                     printSnifferFactory, 10000, 5000),
             1976, 10)) {
       server.startAsync().awaitRunning();
-      //byte [] originalContent = readfromSite("http://" + testSite);
       long start = System.currentTimeMillis();
-      byte[] originalContent = readfromSite("http://" + testSite);
+      byte[] originalContent = readfromSite("http://" + TEST_SITE + ':' + TEST_PORT);
       long time1 = System.currentTimeMillis();
       byte[] proxiedContent = readfromSite("http://localhost:1976");
       long time2 = System.currentTimeMillis();
-      System.out.println("Direct = " + (time1 - start) + " ms, proxied = " + (time2 - time1));
+      LOG.debug("Direct = {}  ms, proxied = {}", (time1 - start), (time2 - time1));
       Assert.assertArrayEquals(originalContent, proxiedContent);
     }
   }
 
-  @Test
+  @Test(timeout = 100000)
   public void testProxySimple() throws IOException, InterruptedException {
     ForkJoinPool pool = new ForkJoinPool(1024);
 
     try (TcpServer server = new TcpServer(pool,
-            new ProxyClientHandler(HostAndPort.fromParts(testSite, 80), printSnifferFactory, printSnifferFactory, 10000, 5000),
+            new ProxyClientHandler(
+                    HostAndPort.fromParts(TEST_SITE, TEST_PORT), printSnifferFactory, printSnifferFactory, 10000, 5000),
             1977, 10)) {
       server.startAsync().awaitRunning();
 
@@ -154,29 +194,30 @@ public class TcpServerTest {
     }
   }
 
-  @Test
+  @Test(timeout = 120000)
   public void testRestart() throws IOException, InterruptedException, TimeoutException {
+    Assume.assumeTrue(OperatingSystem.isMacOsx());
     ForkJoinPool pool = new ForkJoinPool(1024);
     try (TcpServer server = new TcpServer(pool,
             new ProxyClientHandler(HostAndPort.fromParts("bla", 80), null, null, 10000, 5000),
-            1979, 10)) {
+            1979, 10, 120000)) {
       server.startAsync().awaitRunning(10, TimeUnit.SECONDS);
       server.stopAsync().awaitTerminated(10, TimeUnit.SECONDS);
-      server.startAsync().awaitRunning(10, TimeUnit.SECONDS);
+      server.startAsync().awaitRunning(120, TimeUnit.SECONDS);
       Assert.assertTrue(server.isRunning());
     }
   }
 
-  @Test(expected = IOException.class)
+  @Test(expected = IOException.class, timeout = 10000)
   public void testRejectingServer() throws IOException, InterruptedException {
     String testSite = "localhost";
     ForkJoinPool pool = new ForkJoinPool(1024);
     try (TcpServer rejServer = new TcpServer(pool,
             new ClientHandler() {
       @Override
-      public void handle(Selector serverSelector, SocketChannel clientChannel,
-              ExecutorService exec, BlockingQueue<Runnable> tasksToRunBySelector,
-              UpdateablePriorityQueue<DeadlineAction> deadlineActions) throws IOException {
+      public void handle(final Selector serverSelector, final SocketChannel clientChannel,
+              final ExecutorService exec, final BlockingQueue<Runnable> tasksToRunBySelector,
+              final UpdateablePriorityQueue<DeadlineAction> deadlineActions) throws IOException {
         clientChannel.configureBlocking(true);
         ByteBuffer allocate = ByteBuffer.allocate(1024);
         clientChannel.read(allocate); // read something
@@ -197,7 +238,7 @@ public class TcpServerTest {
               1981, 10)) {
         server.startAsync().awaitRunning();
         byte[] readfromSite = readfromSite("http://localhost:1981");
-        System.out.println("Response: " + new String(readfromSite, StandardCharsets.UTF_8));
+        LOG.debug("Response: {}", new String(readfromSite, StandardCharsets.UTF_8)); //probably wrong charset assumtion
       }
     }
   }
@@ -221,9 +262,12 @@ public class TcpServerTest {
     }
   }
 
-  private static byte[] readfromSite(String siteUrl) throws IOException {
+  private static byte[] readfromSite(final String siteUrl) throws IOException {
     URL url = new URL(siteUrl);
-    InputStream stream = url.openStream();
+    URLConnection conn = url.openConnection();
+    conn.setConnectTimeout(10000);
+    conn.setReadTimeout(30000);
+    InputStream stream = conn.getInputStream();
     ByteArrayOutputStream bos = new ByteArrayOutputStream();
     Streams.copy(stream, bos);
     return bos.toByteArray();

@@ -31,14 +31,20 @@
  */
 package org.spf4j.perf.impl;
 
+import org.spf4j.perf.impl.acc.DirectStoreMultiAccumulator;
+import org.spf4j.perf.impl.acc.DirectStoreAccumulator;
+import org.spf4j.perf.impl.acc.QuantizedAccumulator;
+import org.spf4j.perf.impl.acc.AddAndCountAccumulator;
+import org.spf4j.perf.impl.acc.MinMaxAvgAccumulator;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.spf4j.perf.impl.ms.StoreType;
 import org.spf4j.perf.impl.ms.graphite.GraphiteTcpStore;
 import org.spf4j.perf.impl.ms.graphite.GraphiteUdpStore;
-import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.lang.management.ManagementFactory;
+import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -47,14 +53,18 @@ import org.slf4j.LoggerFactory;
 import org.spf4j.base.CharSequences;
 import org.spf4j.io.Csv;
 import org.spf4j.io.csv.CsvParseException;
-import org.spf4j.perf.MeasurementRecorder;
+import org.spf4j.perf.CloseableMeasurementRecorder;
+import org.spf4j.perf.CloseableMeasurementRecorderSource;
 import org.spf4j.perf.MeasurementRecorderSource;
 import org.spf4j.perf.MeasurementStore;
 import org.spf4j.perf.MultiMeasurementRecorder;
+import org.spf4j.perf.impl.acc.CountAccumulator;
 import org.spf4j.perf.impl.ms.Flusher;
 import org.spf4j.perf.impl.ms.MultiStore;
-import org.spf4j.perf.impl.ms.tsdb.TSDBMeasurementStore;
+import org.spf4j.perf.impl.ms.tsdb.AvroMeasurementStore;
 import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.tsdb2.avro.Aggregation;
+import org.spf4j.tsdb2.avro.MeasurementType;
 
 /**
  *
@@ -74,7 +84,7 @@ public final class RecorderFactory {
       LOG.error("Cannot initialize measurement store, installing NOP store", ex);
       mStore = new NopMeasurementStore();
     }
-    if (!(mStore instanceof NopMeasurementStore)) {
+    if (!(mStore instanceof NopMeasurementStore) && Boolean.getBoolean("spf4j.perf.ms.periodicFlush")) {
       Flusher.flushEvery(Integer.getInteger("spf4j.perf.ms.flushIntervalMillis", 60000), mStore);
     }
     MEASUREMENT_STORE = mStore;
@@ -100,12 +110,10 @@ public final class RecorderFactory {
           throws IOException, ObjectCreationException {
 
     if (configuration == null || configuration.trim().isEmpty()) {
-      return new TSDBMeasurementStore(new File(
-              System.getProperty("spf4j.perf.ms.defaultTsdbFolderPath",
-                      System.getProperty("java.io.tmpdir"))
-              + File.separator
-              + CharSequences.validatedFileName(System.getProperty("spf4j.perf.ms.defaultTsdbFileNamePrefix",
-                      ManagementFactory.getRuntimeMXBean().getName() + ".tsdb2"))));
+      return new AvroMeasurementStore(Paths.get(System.getProperty("spf4j.perf.ms.defaultTsdbFolderPath",
+                      System.getProperty("java.io.tmpdir"))),
+              CharSequences.validatedFileName(System.getProperty("spf4j.perf.ms.defaultTsdbFileNamePrefix",
+                      ManagementFactory.getRuntimeMXBean().getName())));
     }
 
     List<String> stores;
@@ -116,55 +124,112 @@ public final class RecorderFactory {
     }
     final int size = stores.size();
     if (size == 1) {
-      return fromString(stores.get(0));
+      return StoreType.fromString(stores.get(0));
     } else {
       MeasurementStore[] mstores = new MeasurementStore[size];
       int i = 0;
       for (String config : stores) {
-        mstores[i] = fromString(config);
+        mstores[i] = StoreType.fromString(config);
         i++;
       }
       return new MultiStore(mstores);
     }
   }
 
-  public static MeasurementStore fromString(final String string) throws IOException, ObjectCreationException {
-    int atIdx = string.indexOf('@');
-    final int length = string.length();
-    if (atIdx < 0) {
-      atIdx = length;
-    }
-    StoreType type = StoreType.valueOf(string.substring(0, atIdx));
-    if (atIdx >= length) {
-      return type.create("");
-    } else {
-      return type.create(string.substring(atIdx + 1));
-    }
-  }
-
-  public static MeasurementRecorder createScalableQuantizedRecorder(
+  /**
+   * Create a Quantized Measurement recorder. (see concept at http://dtrace.org/blogs/bmc/2011/02/08/llquantize/ )
+   *
+   * A quantized measurement recorder is appropriate for low overhead measurement recording with good detail
+   * using quantized data resolution.
+   * For lower overhead recorder see createScalableMinMaxAvgRecorder.
+   *
+   * example : createScalableQuantizedRecorder("response time", "ms", 60000, 10, -3, 3, 5)
+   * will aggregate and persist measurements every minute.
+   * will have the following measurement buckets:
+   *
+   * QNI_-1000, Q-1000_-800, Q-800_-600, Q-600_-400, Q-400_-100, Q-100_-80, Q-80_-60, Q-60_-40, Q-40_-10, Q-10_-8,
+   * Q-8_-6, Q-6_-4, Q-4_-2, Q-2_0, Q0_2, Q2_4, Q4_6,
+   * Q6_8, Q8_10, Q10_40, Q40_60, Q60_80, Q80_100, Q100_400, Q400_600, Q600_800, Q800_1000, Q1000_PI
+   *
+   * where A_B equivalent Math notation is [A,B)
+   * where NI = negative infinity
+   * where PI is positive infinity
+   *
+   * @param forWhat an object identifying what is being measured, ex: "response time"
+   * @param unitOfMeasurement the unit of measurement of the measurements, ex "milliseconds"
+   * @param sampleTimeMillis the sampling (accumulating interval) ex: 60000 for minute level detail.
+   * @param factor the log factor of the magnitudes, ex: 10 for 0-1,1-10,10-100,100 - 1000 magnitudes.
+   * @param lowerMagnitude the lowest magnitude. ex: 10 for 10 * factor min bucket limit value.
+   * @param higherMagnitude th highest magnitude. ex 10 for 10 * factor max bucket limit value.
+   * @param quantasPerMagnitude number of equally divided measurement buckets per magnitude. ex: 10
+   * @return a measurement recorder that
+   */
+  public static CloseableMeasurementRecorder createScalableQuantizedRecorder(
           final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis,
           final int factor, final int lowerMagnitude,
           final int higherMagnitude, final int quantasPerMagnitude) {
     ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new QuantizedAccumulator(forWhat, "",
             unitOfMeasurement, factor, lowerMagnitude, higherMagnitude,
-            quantasPerMagnitude), sampleTimeMillis, MEASUREMENT_STORE);
+            quantasPerMagnitude), sampleTimeMillis, MEASUREMENT_STORE, true);
     mr.registerJmx();
     return mr;
   }
 
-  public static MeasurementRecorder createScalableCountingRecorder(
-          final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
-    ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new CountingAccumulator(forWhat, "",
-            unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE);
+  public static CloseableMeasurementRecorder createScalableQuantizedRecorder2(
+          final Object forWhat, final String unitOfMeasurement,  final int sampleTimeMillis,
+          final int factor, final int lowerMagnitude, final int higherMagnitude,
+          final int quantasPerMagnitude) {
+    ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new QuantizedAccumulator(forWhat, "",
+            unitOfMeasurement, factor, lowerMagnitude, higherMagnitude,
+            quantasPerMagnitude), sampleTimeMillis, MEASUREMENT_STORE, false);
     mr.registerJmx();
     return mr;
   }
 
-  public static MeasurementRecorder createScalableMinMaxAvgRecorder(
+  /**
+   * This will accumulate a sum of all the recorded numbers +
+   * the number fo record method invocations.
+   * @param forWhat entity we measure
+   * @param unitOfMeasurement the unit of measurement
+   * @param bucketTimeMillis the bucket time in milliseconds.
+   * @return
+   */
+  public static CloseableMeasurementRecorder createScalableCountingRecorder(
+          final Object forWhat, final String unitOfMeasurement, final int bucketTimeMillis) {
+    ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new AddAndCountAccumulator(forWhat, "",
+            unitOfMeasurement), bucketTimeMillis, MEASUREMENT_STORE, true);
+    mr.registerJmx();
+    return mr;
+  }
+
+
+  /**
+   * This will accumulate a sum of all the recorded numbers
+   * @param forWhat entity we measure
+   * @param unitOfMeasurement the unit of measurement
+   * @param bucketTimeMillis the bucket time in milliseconds.
+   * @return
+   */
+  public static CloseableMeasurementRecorder createScalableSimpleCountingRecorder(
+          final Object forWhat, final String unitOfMeasurement, final int bucketTimeMillis) {
+    ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new CountAccumulator(forWhat, "",
+            unitOfMeasurement), bucketTimeMillis, MEASUREMENT_STORE, true);
+    mr.registerJmx();
+    return mr;
+  }
+
+  public static CloseableMeasurementRecorder createScalableMinMaxAvgRecorder(
           final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
     ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new MinMaxAvgAccumulator(forWhat, "",
-            unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE);
+            unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, true);
+    mr.registerJmx();
+    return mr;
+  }
+
+  public static CloseableMeasurementRecorder createScalableMinMaxAvgRecorder2(
+          final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
+    ScalableMeasurementRecorder mr = new ScalableMeasurementRecorder(new MinMaxAvgAccumulator(forWhat, "",
+            unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, false);
     mr.registerJmx();
     return mr;
   }
@@ -176,7 +241,19 @@ public final class RecorderFactory {
     ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
             new QuantizedAccumulator(forWhat, "",
                     unitOfMeasurement, factor, lowerMagnitude, higherMagnitude, quantasPerMagnitude),
-            sampleTimeMillis, MEASUREMENT_STORE);
+            sampleTimeMillis, MEASUREMENT_STORE, true);
+    mrs.registerJmx();
+    return mrs;
+  }
+
+  public static CloseableMeasurementRecorderSource createScalableQuantizedRecorderSource2(final Object forWhat,
+          final String unitOfMeasurement,  final int sampleTimeMillis,
+          final int factor, final int lowerMagnitude, final int higherMagnitude,
+          final int quantasPerMagnitude) {
+    ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
+            new QuantizedAccumulator(forWhat, "",
+                    unitOfMeasurement, factor, lowerMagnitude, higherMagnitude, quantasPerMagnitude),
+            sampleTimeMillis, MEASUREMENT_STORE, false);
     mrs.registerJmx();
     return mrs;
   }
@@ -184,8 +261,35 @@ public final class RecorderFactory {
   public static MeasurementRecorderSource createScalableCountingRecorderSource(
           final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
     ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
-            new CountingAccumulator(forWhat, "",
-                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE);
+            new AddAndCountAccumulator(forWhat, "",
+                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, true);
+    mrs.registerJmx();
+    return mrs;
+  }
+
+  public static CloseableMeasurementRecorderSource createScalableSimpleCountingRecorderSource(
+          final Object forWhat, final String description, final String unitOfMeasurement, final int sampleTimeMillis) {
+    ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
+            new CountAccumulator(forWhat, description,
+                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, true);
+    mrs.registerJmx();
+    return mrs;
+  }
+
+  public static CloseableMeasurementRecorderSource createScalableSimpleCountingRecorderSource(
+          final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
+    ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
+            new CountAccumulator(forWhat, "",
+                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, true);
+    mrs.registerJmx();
+    return mrs;
+  }
+
+  public static CloseableMeasurementRecorderSource createScalableCountingRecorderSource2(
+          final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
+    ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
+            new AddAndCountAccumulator(forWhat, "",
+                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, false);
     mrs.registerJmx();
     return mrs;
   }
@@ -194,30 +298,60 @@ public final class RecorderFactory {
           final Object forWhat, final String unitOfMeasurement, final int sampleTimeMillis) {
     ScalableMeasurementRecorderSource mrs = new ScalableMeasurementRecorderSource(
             new MinMaxAvgAccumulator(forWhat, "",
-                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE);
+                    unitOfMeasurement), sampleTimeMillis, MEASUREMENT_STORE, true);
     mrs.registerJmx();
     return mrs;
   }
 
   public static MultiMeasurementRecorder createDirectRecorder(final Object measuredEntity, final String description,
           final String[] measurementNames, final String[] measurementUnits) {
+    Aggregation[] aggs = new Aggregation[measurementNames.length];
+    Arrays.fill(aggs, Aggregation.UNKNOWN);
     DirectStoreMultiAccumulator mr = new DirectStoreMultiAccumulator(
             new MeasurementsInfoImpl(measuredEntity, description,
-                    measurementNames, measurementUnits), MEASUREMENT_STORE);
+                    measurementNames, measurementUnits, aggs, MeasurementType.UNTYPED), MEASUREMENT_STORE);
     mr.registerJmx();
     return mr;
   }
 
-  public static MeasurementRecorder createDirectRecorder(final Object forWhat, final String unitOfMeasurement) {
+  public static MultiMeasurementRecorder createDirectRecorder(final Object measuredEntity, final String description,
+          final String[] measurementNames, final String[] measurementUnits, final MeasurementType type) {
+    Aggregation[] aggs = new Aggregation[measurementNames.length];
+    Arrays.fill(aggs, Aggregation.UNKNOWN);
+    DirectStoreMultiAccumulator mr = new DirectStoreMultiAccumulator(
+            new MeasurementsInfoImpl(measuredEntity, description,
+                    measurementNames, measurementUnits, aggs, type), MEASUREMENT_STORE);
+    mr.registerJmx();
+    return mr;
+  }
+
+  public static CloseableMeasurementRecorder createDirectRecorder(final Object forWhat,
+          final String unitOfMeasurement) {
     DirectStoreAccumulator mr = new DirectStoreAccumulator(forWhat, "", unitOfMeasurement, 0, MEASUREMENT_STORE);
     mr.registerJmx();
     return mr;
   }
 
-  public static MeasurementRecorder createDirectRecorder(final Object forWhat,
+  public static CloseableMeasurementRecorder createDirectRecorder(final Object forWhat,
+          final String unitOfMeasurement,
+          final MeasurementType type) {
+    DirectStoreAccumulator mr = new DirectStoreAccumulator(forWhat, "", unitOfMeasurement, 0, MEASUREMENT_STORE, type);
+    mr.registerJmx();
+    return mr;
+  }
+
+  public static CloseableMeasurementRecorder createDirectRecorder(final Object forWhat,
           final String unitOfMeasurement, final int sampleTimeMillis) {
     DirectStoreAccumulator mr = new DirectStoreAccumulator(
             forWhat, "", unitOfMeasurement, sampleTimeMillis, MEASUREMENT_STORE);
+    mr.registerJmx();
+    return mr;
+  }
+
+  public static CloseableMeasurementRecorder createDirectRecorder(final Object forWhat,
+          final String unitOfMeasurement, final int sampleTimeMillis, final MeasurementType type) {
+    DirectStoreAccumulator mr = new DirectStoreAccumulator(
+            forWhat, "", unitOfMeasurement, sampleTimeMillis, MEASUREMENT_STORE, type);
     mr.registerJmx();
     return mr;
   }
@@ -227,7 +361,7 @@ public final class RecorderFactory {
     return new DirectRecorderSource(forWhat, "", unitOfMeasurement, 0, MEASUREMENT_STORE);
   }
 
-  public static MeasurementRecorder createDirectGraphiteUdpRecorder(final Object forWhat,
+  public static CloseableMeasurementRecorder createDirectGraphiteUdpRecorder(final Object forWhat,
           final String unitOfMeasurement,
           final String graphiteHost, final int graphitePort) throws ObjectCreationException {
     DirectStoreAccumulator mr = new DirectStoreAccumulator(forWhat, "", unitOfMeasurement, 0,
@@ -236,7 +370,7 @@ public final class RecorderFactory {
     return mr;
   }
 
-  public static MeasurementRecorder createDirectGraphiteTcpRecorder(final Object forWhat,
+  public static CloseableMeasurementRecorder createDirectGraphiteTcpRecorder(final Object forWhat,
           final String unitOfMeasurement,
           final String graphiteHost, final int graphitePort) throws ObjectCreationException {
     DirectStoreAccumulator mr = new DirectStoreAccumulator(forWhat, "", unitOfMeasurement, 0,

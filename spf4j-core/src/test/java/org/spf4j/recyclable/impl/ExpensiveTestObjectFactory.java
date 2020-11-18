@@ -31,16 +31,18 @@
  */
 package org.spf4j.recyclable.impl;
 
-import org.spf4j.recyclable.ObjectDisposeException;
 import org.spf4j.recyclable.RecyclingSupplier;
 import java.io.IOException;
-import org.apache.http.ConnectionClosedException;
+import java.nio.channels.ClosedChannelException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- *
  * @author zoly
  */
 public final class ExpensiveTestObjectFactory implements RecyclingSupplier.Factory<ExpensiveTestObject> {
+
+    private static final Logger LOG = LoggerFactory.getLogger(ExpensiveTestObjectFactory.class);
 
     private final long maxIdleMillis;
     private final int nrUsesToFailAfter;
@@ -67,13 +69,13 @@ public final class ExpensiveTestObjectFactory implements RecyclingSupplier.Facto
     }
 
     @Override
-    public void dispose(final ExpensiveTestObject object) throws ObjectDisposeException {
+    public void dispose(final ExpensiveTestObject object) {
         try {
             object.close();
-        } catch (ConnectionClosedException ex) {
+        } catch (ClosedChannelException ex) {
           // connection is already closed.
         } catch (IOException ex) {
-            throw new ObjectDisposeException(ex);
+          LOG.warn("Cannot dispose object {}", this, ex);
         }
     }
 

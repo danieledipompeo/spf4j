@@ -38,7 +38,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import org.spf4j.base.AbstractRunnable;
 import org.spf4j.concurrent.DefaultScheduler;
-import org.spf4j.perf.MeasurementRecorder;
 import org.spf4j.perf.impl.RecorderFactory;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
@@ -46,9 +45,9 @@ import java.lang.management.MemoryUsage;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import javax.management.MBeanServer;
-import org.spf4j.base.Closeables;
 import org.spf4j.jmx.JmxExport;
 import org.spf4j.jmx.Registry;
+import org.spf4j.perf.CloseableMeasurementRecorder;
 
 /**
  * This class allows you to poll and recordAt to a file the heap committed and heap used for your java process. start
@@ -72,7 +71,7 @@ public final class MemoryUsageSampler {
   static {
     org.spf4j.base.Runtime.queueHook(2, new AbstractRunnable(true) {
       @Override
-      public void doRun() throws IOException {
+      public void doRun() {
         stop();
       }
     });
@@ -113,11 +112,11 @@ public final class MemoryUsageSampler {
   }
 
   @JmxExport
-  public static synchronized void stop() throws IOException {
+  public static synchronized void stop() {
     if (samplingFuture != null) {
       samplingFuture.cancel(false);
-      samplingFuture = null;
       accumulatorRunnable.close();
+      samplingFuture = null;
     }
   }
 
@@ -126,16 +125,22 @@ public final class MemoryUsageSampler {
     return samplingFuture != null;
   }
 
-  private static class AccumulatorRunnable extends AbstractRunnable {
+  private static class AccumulatorRunnable extends AbstractRunnable implements AutoCloseable {
 
-    private final MeasurementRecorder heapCommited;
-    private final MeasurementRecorder heapUsed;
+    private final CloseableMeasurementRecorder heapCommited;
+    private final CloseableMeasurementRecorder heapUsed;
+    private final CloseableMeasurementRecorder nonHeapCommited;
+    private final CloseableMeasurementRecorder nonHeapUsed;
 
     AccumulatorRunnable(final int accumulationIntervalMillis) {
-      heapCommited
-              = RecorderFactory.createScalableMinMaxAvgRecorder("heap-commited", "bytes", accumulationIntervalMillis);
-      heapUsed
-              = RecorderFactory.createScalableMinMaxAvgRecorder("heap-used", "bytes", accumulationIntervalMillis);
+      heapCommited = RecorderFactory.createScalableMinMaxAvgRecorder2("process.heap_commited",
+                      "bytes", accumulationIntervalMillis);
+      heapUsed = RecorderFactory.createScalableMinMaxAvgRecorder2("process.heap_used",
+                      "bytes", accumulationIntervalMillis);
+      nonHeapCommited = RecorderFactory.createScalableMinMaxAvgRecorder2("process.non_heap_commited",
+                      "bytes", accumulationIntervalMillis);
+      nonHeapUsed = RecorderFactory.createScalableMinMaxAvgRecorder2("process.non_heap_used",
+                      "bytes", accumulationIntervalMillis);
     }
 
     @Override
@@ -143,13 +148,17 @@ public final class MemoryUsageSampler {
       MemoryUsage usage = MBEAN.getHeapMemoryUsage();
       heapCommited.record(usage.getCommitted());
       heapUsed.record(usage.getUsed());
+      MemoryUsage nonHeapMemoryUsage = MBEAN.getNonHeapMemoryUsage();
+      nonHeapCommited.record(nonHeapMemoryUsage.getCommitted());
+      nonHeapUsed.record(nonHeapMemoryUsage.getUsed());
     }
 
-    public void close() throws IOException {
-      IOException ex = Closeables.closeAll(heapCommited, heapUsed);
-      if (ex != null) {
-        throw ex;
-      }
+    @Override
+    public void close() {
+      heapUsed.close();
+      heapCommited.close();
+      nonHeapCommited.close();
+      nonHeapUsed.close();
     }
   }
 

@@ -38,25 +38,24 @@ import org.spf4j.zel.vm.SuspendedException;
 
 public final class DEREFX extends Instruction {
 
-    private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 1L;
 
-    private final Object ref;
+  private final Object ref;
 
-    public DEREFX(final Object ref) {
-        this.ref = ref;
-    }
+  public DEREFX(final Object ref) {
+    this.ref = ref;
+  }
 
+  @Override
+  public int execute(final ExecutionContext context)
+          throws SuspendedException, ExecutionException {
+    Object relativeTo = context.popSyncStackVal();
+    pushDeref(relativeTo, ref, context);
+    return 1;
+  }
 
-    @Override
-    public int execute(final ExecutionContext context)
-            throws SuspendedException, ExecutionException {
-       Object relativeTo = context.popSyncStackVal();
-       pushDeref(relativeTo, ref, context);
-       return 1;
-    }
-
-    @Override
-    public Object[] getParameters() {
-        return org.spf4j.base.Arrays.EMPTY_OBJ_ARRAY;
-    }
+  @Override
+  public Object[] getParameters() {
+    return org.spf4j.base.Arrays.EMPTY_OBJ_ARRAY;
+  }
 }

@@ -31,8 +31,10 @@
  */
 package org.spf4j.perf.impl;
 
+import javax.annotation.Nullable;
 import org.spf4j.perf.MeasurementsInfo;
 import org.spf4j.perf.MeasurementStore;
+import org.spf4j.perf.MeasurementStoreQuery;
 
 /**
  *
@@ -60,5 +62,14 @@ public final class NopMeasurementStore implements MeasurementStore {
     public void close() {
         // Do nothing
     }
+
+  @Override
+  @Nullable
+  public MeasurementStoreQuery query() {
+    return null;
+  }
+
+
+
 
 }

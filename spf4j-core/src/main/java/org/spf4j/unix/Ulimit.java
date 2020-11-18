@@ -36,8 +36,9 @@ import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.annotation.Nullable;
 import org.spf4j.base.Arrays;
 
 /**
@@ -58,15 +59,11 @@ public final class Ulimit {
     }
   }
 
-  private static final class Lazy {
-
-    private static final Logger LOG = LoggerFactory.getLogger(Lazy.class);
-  }
-
   private Ulimit() {
   }
 
   @SuppressFBWarnings("PZLA_PREFER_ZERO_LENGTH_ARRAYS")
+  @Nullable
   private static String[] findUlimitCmd() {
     final File bash = new File("/bin/bash");
     final File sh = new File("/bin/sh");
@@ -89,7 +86,7 @@ public final class Ulimit {
    */
   public static int runUlimit(final String... options) {
     if (ULIMIT_CMD == null) {
-      Lazy.LOG.warn("Ulimit not available, assuming no limits");
+      Logger.getLogger(Ulimit.class.getName()).warning("Ulimit not available, assuming no limits");
       return Integer.MAX_VALUE;
     }
     int mfiles;
@@ -102,12 +99,19 @@ public final class Ulimit {
         try {
           mfiles = Integer.parseInt(result.trim());
         } catch (NumberFormatException ex) {
-          Lazy.LOG.warn("Error while parsing ulimit output, assuming no limit", ex);
+          Logger.getLogger(Ulimit.class.getName()).log(Level.WARNING,
+                  "Error while parsing ulimit output, assuming no limit", ex);
           mfiles = Integer.MAX_VALUE;
         }
       }
-    } catch (TimeoutException | IOException | InterruptedException | ExecutionException ex) {
-      Lazy.LOG.warn("Error while running ulimit, assuming no limit", ex);
+    } catch (TimeoutException | IOException | ExecutionException ex) {
+      Logger.getLogger(Ulimit.class.getName()).log(Level.WARNING,
+              "Error while parsing ulimit output, assuming no limit", ex);
+      mfiles = Integer.MAX_VALUE;
+    } catch (InterruptedException ex) {
+      Logger.getLogger(Ulimit.class.getName()).log(Level.WARNING,
+              "Ulimit interrupted, assuming no limit", ex);
+      Thread.currentThread().interrupt();
       mfiles = Integer.MAX_VALUE;
     }
     return mfiles;

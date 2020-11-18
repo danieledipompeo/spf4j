@@ -34,7 +34,6 @@ package org.spf4j.jmx.mappers;
 import com.google.common.reflect.TypeParameter;
 import com.google.common.reflect.TypeToken;
 import org.spf4j.jmx.JMXBeanMapping;
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.sun.jmx.mbeanserver.MXBeanMapping;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InvalidObjectException;
@@ -43,15 +42,18 @@ import java.io.UncheckedIOException;
 import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nonnull;
 import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeDataSupport;
 import javax.management.openmbean.CompositeType;
 import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.OpenType;
 import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.specific.SpecificData;
 import org.apache.avro.specific.SpecificRecordBase;
 import org.spf4j.base.Reflections;
+import org.spf4j.base.UncheckedExecutionException;
 import org.spf4j.jmx.JMXBeanMappingSupplier;
 
 /**
@@ -71,6 +73,8 @@ public final class SpecificRecordOpenTypeMapping extends MXBeanMapping implement
   }
 
   @Override
+  @Nonnull
+  @SuppressFBWarnings("AI_ANNOTATION_ISSUES_NEEDS_NULLABLE") // false positive
   public Object fromOpenValue(final Object openValue) throws InvalidObjectException {
     if (!(openValue instanceof CompositeData)) {
       throw new InvalidObjectException("Not a CompositeData " + openValue);
@@ -113,6 +117,8 @@ public final class SpecificRecordOpenTypeMapping extends MXBeanMapping implement
       .where(new TypeParameter<T>() { }, valToken);
   }
 
+  @SuppressFBWarnings("AI_ANNOTATION_ISSUES_NEEDS_NULLABLE") // false positive
+  @Nonnull
   public static Type getGenericType(final Schema schema) {
     Schema.Type type = schema.getType();
     switch (type) {
@@ -182,7 +188,7 @@ public final class SpecificRecordOpenTypeMapping extends MXBeanMapping implement
   }
 
 
-  private static  CompositeType typeFromSpecificRecord(final SpecificRecordBase r,
+  private static CompositeType typeFromSpecificRecord(final GenericRecord r,
           final JMXBeanMappingSupplier typeMapper) throws NotSerializableException {
     Schema schema = r.getSchema();
     List<Schema.Field> fields = schema.getFields();

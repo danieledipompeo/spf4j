@@ -64,7 +64,7 @@ import org.spf4j.base.asm.Scanner;
 public class ConfigScannerMojo
         extends AbstractMojo {
 
-  public static final Map<Class, String> JAVA2AVROTYPE = new HashMap<>();
+  private static final Map<Class, String> JAVA2AVROTYPE = new HashMap<>();
 
   static {
     JAVA2AVROTYPE.put(String.class, "string");
@@ -303,10 +303,8 @@ public class ConfigScannerMojo
   public void execute() throws MojoExecutionException {
     File f = outputDirectory;
 
-    if (!f.exists()) {
-      if (!f.mkdirs()) {
-        throw new MojoExecutionException("Unable to create directory " + outputDirectory);
-      }
+    if (!f.exists() && !f.mkdirs()) {
+      throw new MojoExecutionException("Unable to create directory " + outputDirectory);
     }
 
     File outFile = new File(f, fileName);

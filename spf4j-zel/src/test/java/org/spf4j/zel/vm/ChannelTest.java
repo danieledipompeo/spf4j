@@ -31,9 +31,9 @@
  */
 package org.spf4j.zel.vm;
 
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutionException;
 import org.junit.Assert;
 import org.junit.Test;
@@ -42,20 +42,17 @@ import org.junit.Test;
  *
  * @author zoly
  */
-public final  class ChannelTest {
+public final class ChannelTest {
 
+  @Test
+  public void test() throws CompileException, ExecutionException, InterruptedException, IOException {
 
-    @Test
-    public void test() throws CompileException, ExecutionException, InterruptedException, IOException {
+    String ctest = Resources.toString(Resources.getResource(ChannelTest.class, "channel.zel"),
+            StandardCharsets.US_ASCII);
 
-        String ctest = Resources.toString(Resources.getResource(ChannelTest.class, "channel.zel"),
-                Charsets.US_ASCII);
+    Program p = Program.compile(ctest);
+    Integer result = (Integer) p.execute();
+    Assert.assertEquals(4950, result.intValue());
 
-        Program p = Program.compile(ctest);
-        System.out.println(p);
-        Integer result = (Integer) p.execute();
-        System.out.println("result = " + result);
-        Assert.assertEquals(4950, result.intValue());
-
-    }
+  }
 }

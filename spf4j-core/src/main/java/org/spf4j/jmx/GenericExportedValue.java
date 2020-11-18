@@ -31,7 +31,6 @@
  */
 package org.spf4j.jmx;
 
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import java.io.InvalidObjectException;
 import java.io.NotSerializableException;
 import java.util.function.Consumer;
@@ -42,6 +41,9 @@ import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeType;
 import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.OpenType;
+import javax.management.openmbean.TabularData;
+import javax.management.openmbean.TabularType;
+import org.spf4j.base.UncheckedExecutionException;
 
 /**
  *
@@ -81,6 +83,21 @@ public final class GenericExportedValue<T> implements ExportedValue {
     this.getter = (Supplier) getter;
     this.setter = (Consumer) setter;
     this.clasz = (Class) CompositeData.class;
+    this.converter = null;
+    this.openType = openType;
+  }
+
+  @SuppressWarnings("unchecked")
+  public GenericExportedValue(
+          @Nonnull final String name, @Nonnull final String description,
+          @Nonnull final Supplier<TabularData> getter,
+          @Nullable final Consumer<TabularData> setter,
+          final TabularType openType) {
+    this.description = description;
+    this.name = name;
+    this.getter = (Supplier) getter;
+    this.setter = (Consumer) setter;
+    this.clasz = (Class) TabularData.class;
     this.converter = null;
     this.openType = openType;
   }

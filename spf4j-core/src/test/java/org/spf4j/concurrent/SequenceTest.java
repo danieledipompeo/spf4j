@@ -33,7 +33,10 @@ package org.spf4j.concurrent;
 
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -41,40 +44,43 @@ import org.junit.Test;
  */
 public final class SequenceTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(SequenceTest.class);
 
-    @Test
-    public void testSequence() throws InterruptedException, ExecutionException {
-        if (org.spf4j.base.Runtime.NR_PROCESSORS <= 4) {
-            return;
-        }
-        // warmup JVM
-        testSeq(new AtomicSequence(0));
-        testSeq(new ScalableSequence(0, 100));
-        // measure;
-        long timeAtomic = testSeq(new AtomicSequence(0));
-        long timeScalable = testSeq(new ScalableSequence(0, 100));
-//        Assert.assertTrue("condition " + timeAtomic + " > " + timeScalable, timeAtomic > timeScalable);
-        System.out.println("Atomic time "  + timeAtomic);
-        System.out.println("Scalable time "  + timeScalable);
-
+  @Test
+  public void testSequence() throws InterruptedException, ExecutionException {
+    if (org.spf4j.base.Runtime.NR_PROCESSORS <= 4) {
+      return;
     }
+    // warmup JVM
+    testSeq(new AtomicSequence(0));
+    testSeq(new ScalableSequence(0, 100));
+    // measure;
+    long seq1 = testSeq(new AtomicSequence(0));
+    long seq2 = testSeq(new ScalableSequence(0, 100));
+    Assert.assertTrue("Should be " + seq2 + " >= " + seq1, seq2 >= seq1);
 
-    public long testSeq(final Sequence sequence) throws InterruptedException, ExecutionException {
-        long startTime = System.currentTimeMillis();
-        Future<Long>[] futures = new Future[org.spf4j.base.Runtime.NR_PROCESSORS];
-        for (int i = 0; i < org.spf4j.base.Runtime.NR_PROCESSORS; i++) {
-            futures[i] = DefaultExecutor.INSTANCE.submit(() -> {
-              long last = -1;
-              for (int i1 = 0; i1 < 100000; i1++) {
-                last = sequence.next();
-              }
-              return last;
-            });
+  }
+
+  public long testSeq(final Sequence sequence) throws InterruptedException, ExecutionException {
+    Future<Long>[] futures = new Future[org.spf4j.base.Runtime.NR_PROCESSORS];
+    for (int i = 0; i < org.spf4j.base.Runtime.NR_PROCESSORS; i++) {
+      futures[i] = DefaultExecutor.INSTANCE.submit(() -> {
+        long last = -1;
+        for (int i1 = 0; i1 < 100000; i1++) {
+          last = sequence.next();
         }
-        for (Future<Long> future : futures) {
-            System.out.println("Seq" + sequence.getClass() + " " + future.get());
-        }
-        return System.currentTimeMillis() - startTime;
+        return last;
+      });
     }
+    long seq = 0;
+    for (Future<Long> future : futures) {
+      long ls = future.get();
+      if (ls > seq) {
+        seq = ls;
+      }
+      LOG.debug("Seq {}: {}",  sequence.getClass(), ls);
+    }
+    return seq;
+  }
 
 }

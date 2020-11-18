@@ -15,7 +15,6 @@
  */
 package org.spf4j.jdiff;
 
-import org.spf4j.jdiff.utils.Compress;
 import com.google.common.util.concurrent.UncheckedExecutionException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.BufferedWriter;
@@ -26,13 +25,14 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.stream.Stream;
 import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.MojoExecution;
@@ -45,6 +45,7 @@ import org.eclipse.aether.resolution.ArtifactResolutionException;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.VersionRangeResolutionException;
 import org.eclipse.aether.version.Version;
+import org.spf4j.io.compress.Compress;
 import org.spf4j.maven.MavenRepositoryUtils;
 
 /**
@@ -63,7 +64,7 @@ public final class JDiffRunner {
   private final RepositorySystemSession reposSession;
 
   public JDiffRunner() {
-    this(null, null, null, Arrays.asList(MavenRepositoryUtils.getDefaultlRepository()),
+    this(null, null, null, Collections.singletonList(MavenRepositoryUtils.getDefaultRepository()),
             MavenRepositoryUtils.getRepositorySystem(), System.getProperty("spf4j.jdiff.javadocExec"));
   }
 
@@ -219,7 +220,7 @@ public final class JDiffRunner {
       Set<File> deps = MavenRepositoryUtils.resolveArtifactAndDependencies("compile", groupId, artifactId,
               null, "jar", v.toString(), remoteRepos, repositorySystem, reposSession);
       String prevApiName = artifactId + '-' + v;
-      Set<String> prevPackages = jdiff.generateJDiffXML(Arrays.asList(sourceDestination.toFile()),
+      Set<String> prevPackages = jdiff.generateJDiffXML(Collections.singletonList(sourceDestination.toFile()),
               deps, destinationFolder, prevApiName, null);
       for (int i = 1, l = versions.size(); i < l; i++) {
         v = versions.get(i);
@@ -232,7 +233,7 @@ public final class JDiffRunner {
         deps = MavenRepositoryUtils.resolveArtifactAndDependencies("compile", groupId, artifactId,
                 null, "jar", v.toString(), remoteRepos, repositorySystem, reposSession);
         String apiName = artifactId + '-' + v;
-        Set<String> packages = jdiff.generateJDiffXML(Arrays.asList(sourceDestination.toFile()), deps,
+        Set<String> packages = jdiff.generateJDiffXML(Collections.singletonList(sourceDestination.toFile()), deps,
                 destinationFolder, apiName, null);
         prevPackages.addAll(packages);
         Path reportsDestination = destinationFolder.toPath().resolve(prevApiName + '_' + apiName);
@@ -266,7 +267,7 @@ public final class JDiffRunner {
       Set<File> deps = MavenRepositoryUtils.resolveArtifactAndDependencies("compile", groupId, artifactId,
               null, "jar", version1, remoteRepos, repositorySystem, reposSession);
       String prevApiName = artifactId + '-' + version1;
-      Set<String> prevPackages = jdiff.generateJDiffXML(Arrays.asList(sourceDestination.toFile()),
+      Set<String> prevPackages = jdiff.generateJDiffXML(Collections.singletonList(sourceDestination.toFile()),
               deps, destinationFolder, prevApiName, includePackages);
 
       File sourceArtifact = MavenRepositoryUtils.resolveArtifact(
@@ -278,7 +279,7 @@ public final class JDiffRunner {
       deps = MavenRepositoryUtils.resolveArtifactAndDependencies("compile", groupId, artifactId,
               null, "jar", version2, remoteRepos, repositorySystem, reposSession);
       String apiName = artifactId + '-' + version2;
-      Set<String> packages = jdiff.generateJDiffXML(Arrays.asList(sourceDestination.toFile()), deps,
+      Set<String> packages = jdiff.generateJDiffXML(Collections.singletonList(sourceDestination.toFile()), deps,
               destinationFolder, apiName, includePackages);
       prevPackages.addAll(packages);
       Compress.unzip(prevJavaDocArtifact.toPath(), destinationFolder.toPath().resolve(prevApiName));
@@ -305,21 +306,22 @@ public final class JDiffRunner {
               + "<table summary=\"Api Difference Reports\""
               + " width=\"100%\" border=\"0\" cellspacing=\"0\" cellpadding=\"0\">");
       Path reportPath = reportOutputDirectory.toPath();
-      Files.walk(reportPath, 2)
-              .map((p) -> reportPath.relativize(p))
-              .filter((p) -> p.getNameCount() > 1 && p.endsWith("changes.html"))
-              .forEach((p) -> {
-                try {
-                  writer.append("  <tr>\n"
-                          + "  <td bgcolor=\"#FFFFCC\">\n"
-                          + "    <font size=\"+1\"><a href=\"" + p + "\"> "
-                          + p.getName(0).toString().replace("_", " to ") + " </a></font>\n"
-                          + "  </td>\n"
-                          + "  </tr>");
-                } catch (IOException ex) {
-                  throw new UncheckedIOException(ex);
-                }
-              });
+      try (Stream<Path> stream = Files.walk(reportPath, 2)) {
+        stream.map((p) -> reportPath.relativize(p))
+                .filter((p) -> p.getNameCount() > 1 && p.endsWith("changes.html"))
+                .forEach((p) -> {
+                  try {
+                    writer.append("  <tr>\n"
+                            + "  <td bgcolor=\"#FFFFCC\">\n"
+                            + "    <font size=\"+1\"><a href=\"" + p + "\"> "
+                            + p.getName(0).toString().replace("_", " to ") + " </a></font>\n"
+                            + "  </td>\n"
+                            + "  </tr>");
+                  } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                  }
+                });
+      }
       writer.append("</TABLE>\n"
               + "</BODY>\n"
               + "</HTML>");

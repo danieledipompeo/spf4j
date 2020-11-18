@@ -35,14 +35,21 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import org.spf4j.base.Callables.AdvancedRetryPredicate;
+import java.util.concurrent.TimeUnit;
 
 
+/**
+ * Will retry with the default retry policy.
+ * @author Zoltan Farkas
+ */
 @Retention(RetentionPolicy.RUNTIME)
 @Target(ElementType.METHOD)
 public @interface Retry {
-    int immediateRetries() default 5;
-    int retryDelayMillis() default 1000;
-    int timeoutMillis() default 300000;
-    Class<? extends AdvancedRetryPredicate<Exception>> exRetry() default VoidPredicate.class;
+
+  String retryPolicyName() default "";
+
+  long timeout() default 300000;
+
+  TimeUnit units() default TimeUnit.MILLISECONDS;
+
 }

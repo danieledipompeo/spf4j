@@ -35,7 +35,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
 import java.io.Reader;
-import java.io.StringWriter;
+import java.io.StringReader;
 import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.util.List;
@@ -73,6 +73,21 @@ public final class Csv {
   }
 
   public interface CsvMapHandler<T> extends org.spf4j.io.csv.CsvMapHandler<T> {
+  }
+
+  public static String[] readSystemProperty(final String propertyName, final String... defaults) {
+    String propertyVal = System.getProperty(propertyName);
+    if (propertyVal == null) {
+      return defaults;
+    } else {
+      List<String> row;
+      try {
+        row = readRow(propertyVal);
+      } catch (CsvParseException ex) {
+         throw new RuntimeException("Unable to parser property " + propertyName + " = " + propertyVal, ex);
+      }
+      return row.toArray(new String[row.size()]);
+    }
   }
 
   public static void writeCsvRow(final Appendable writer, final Object... elems) throws IOException {
@@ -117,6 +132,14 @@ public final class Csv {
   public static <T> T read(final Reader preader,
           final CsvMapHandler<T> handler) throws IOException, CsvParseException {
     return CSV.read(preader, handler);
+  }
+
+  public static List<String> readRow(final String row) throws CsvParseException {
+    try {
+      return readRow(new StringReader(row));
+    } catch (IOException ex) {
+      throw new UncheckedIOException(ex);
+    }
   }
 
   public static List<String> readRow(final Reader reader) throws IOException, CsvParseException {
@@ -190,7 +213,7 @@ public final class Csv {
 
   public static CharSequence toCsvElement(final CharSequence elem) {
     if (CharSequences.containsAnyChar(elem, TO_ESCAPE)) {
-      StringWriter sw = new StringWriter(elem.length() - 1);
+      StringBuilder sw = new StringBuilder(elem.length() + 2);
       try {
         writeQuotedCsvElement(elem, sw);
       } catch (IOException ex) {

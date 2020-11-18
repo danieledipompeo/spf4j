@@ -44,9 +44,10 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import org.spf4j.jmx.JmxExport;
 import org.spf4j.jmx.Registry;
+import org.spf4j.tsdb2.avro.MeasurementType;
 
 /**
- * This class allows you to poll and recordAt to a file the heap commited and heap used for your java process. start
+ * This class allows you to poll and recordAt to a file the heap committed and heap used for your java process. start
  * data recording by calling the startMemoryUsageSampling method, stop the data recording by calling the method:
  * startMemoryUsageSampling.
  *
@@ -70,11 +71,15 @@ public final class GCUsageSampler {
   private GCUsageSampler() {
   }
 
+  public static List<GarbageCollectorMXBean> getMBEANS() {
+    return MBEANS;
+  }
+
   @JmxExport
   public static synchronized void start(@JmxExport("sampleTimeMillis") final int sampleTime) {
     if (samplingFuture == null) {
       final MeasurementRecorder gcUsage
-              = RecorderFactory.createDirectRecorder("gc-time", "ms", sampleTime);
+              = RecorderFactory.createDirectRecorder("process.gc_time", "ms", sampleTime, MeasurementType.COUNTER);
       samplingFuture = DefaultScheduler.INSTANCE.scheduleWithFixedDelay(new AbstractRunnable() {
 
         private final TObjectLongMap lastValues = new TObjectLongHashMap();
@@ -99,18 +104,17 @@ public final class GCUsageSampler {
     }
   }
 
-  public static long getGCTimeDiff(final List<GarbageCollectorMXBean> gcBeans, final TObjectLongMap lastValues) {
+  public static long getGCTimeDiff(final Iterable<GarbageCollectorMXBean> gcBeans, final TObjectLongMap lastValues) {
     long gcTime = 0;
     for (GarbageCollectorMXBean gcBean : gcBeans) {
-      long prevVal = lastValues.get(gcBean);
       long currVal = gcBean.getCollectionTime();
+      long prevVal = lastValues.put(gcBean, currVal);
       gcTime += currVal - prevVal;
-      lastValues.put(gcBean, currVal);
     }
     return gcTime;
   }
 
-  public static long getGCTime(final List<GarbageCollectorMXBean> gcBeans) {
+  public static long getGCTime(final Iterable<GarbageCollectorMXBean> gcBeans) {
     long gcTime = 0;
     for (GarbageCollectorMXBean gcBean : gcBeans) {
       gcTime += gcBean.getCollectionTime();

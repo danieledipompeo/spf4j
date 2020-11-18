@@ -32,13 +32,17 @@
 package org.spf4j.aspects;
 
 import com.google.common.util.concurrent.UncheckedExecutionException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.spf4j.annotations.Retry;
-import org.spf4j.annotations.VoidPredicate;
-import org.spf4j.base.Callables;
-import org.spf4j.base.Callables.TimeoutCallable;
+import org.spf4j.base.ExecutionContext;
+import org.spf4j.base.ExecutionContexts;
+import org.spf4j.failsafe.RetryPolicy;
 
 /**
  * Aspect that measures execution time and does performance logging for all methods annotated with: PerformanceMonitor
@@ -49,15 +53,15 @@ import org.spf4j.base.Callables.TimeoutCallable;
 @Aspect
 public final class RetryAspect {
 
-  @Around(value = "execution(@org.spf4j.annotations.Retry * *(..)) && @annotation(annot)",
-          argNames = "pjp,annot")
-  public Object performanceMonitoredMethod(final ProceedingJoinPoint pjp, final Retry annot)
-          throws Throwable {
-    final TimeoutCallable<Object, Exception> timeoutCallable =
-            new TimeoutCallable<Object, Exception>(annot.timeoutMillis()) {
+  private static final ConcurrentMap<String, RetryPolicy> POLICIES = new ConcurrentHashMap<>();
 
-      @Override
-      public Object call(final long dealine) throws Exception {
+  @Around(value = "execution(@org.spf4j.annotations.Retry * *(..)) && @annotation(org.spf4j.annotations.Retry annot)",
+          argNames = "pjp,annot")
+  @SuppressFBWarnings("FII_USE_METHOD_REFERENCE")
+  public Object retriedMethod(final ProceedingJoinPoint pjp, final Retry annot)
+          throws Throwable {
+    try (ExecutionContext ctx = ExecutionContexts.start(pjp.toShortString(), annot.timeout(), annot.units())) {
+      Callable c = () -> {
         try {
           return pjp.proceed();
         } catch (Exception | Error e) {
@@ -65,17 +69,19 @@ public final class RetryAspect {
         } catch (Throwable ex) {
           throw new UncheckedExecutionException(ex);
         }
+      };
+      String retryPolicyName = annot.retryPolicyName();
+      if ("".equals(retryPolicyName)) {
+        return RetryPolicy.defaultPolicy().call(c, Exception.class, ctx.getDeadlineNanos());
+      } else {
+        return POLICIES.get(retryPolicyName).call(c, Exception.class, ctx.getDeadlineNanos());
       }
-    };
-    final long origDeadline = org.spf4j.base.Runtime.getDeadline();
-    org.spf4j.base.Runtime.setDeadline(timeoutCallable.getDeadline());
-    try {
-      return Callables.executeWithRetry(timeoutCallable, annot.immediateRetries(), annot.retryDelayMillis(),
-              annot.exRetry() == VoidPredicate.class ? Callables.DEFAULT_EXCEPTION_RETRY
-              : annot.exRetry().newInstance(), Exception.class);
-    } finally {
-      org.spf4j.base.Runtime.setDeadline(origDeadline);
     }
 
   }
+
+  public static RetryPolicy registerRetryPolicy(final String name, final RetryPolicy policy) {
+    return POLICIES.put(name, policy);
+  }
+
 }

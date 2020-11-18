@@ -34,20 +34,23 @@ package org.spf4j.perf.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import gnu.trove.map.TObjectLongMap;
 import gnu.trove.map.hash.TObjectLongHashMap;
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.io.UncheckedIOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import javax.annotation.Nonnull;
 import javax.annotation.concurrent.ThreadSafe;
+import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeDataSupport;
 import javax.management.openmbean.CompositeType;
 import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.OpenType;
+import javax.management.openmbean.TabularDataSupport;
+import javax.management.openmbean.TabularType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spf4j.base.AbstractRunnable;
@@ -58,6 +61,8 @@ import org.spf4j.jmx.GenericExportedValue;
 import org.spf4j.jmx.JmxExport;
 import org.spf4j.jmx.DynamicMBeanBuilder;
 import org.spf4j.jmx.Registry;
+import org.spf4j.perf.CloseableMeasurementRecorderSource;
+import org.spf4j.perf.JmxSupport;
 import org.spf4j.perf.MeasurementAccumulator;
 import org.spf4j.perf.MeasurementsInfo;
 import org.spf4j.perf.MeasurementsSource;
@@ -69,7 +74,7 @@ import org.spf4j.perf.MeasurementRecorderSource;
 // a recorder instance is tipically alive for the entire life of the process
 @SuppressFBWarnings("PMB_INSTANCE_BASED_THREAD_LOCAL")
 public final class ScalableMeasurementRecorderSource implements
-        MeasurementRecorderSource, MeasurementsSource, Closeable {
+        MeasurementRecorderSource, MeasurementsSource, CloseableMeasurementRecorderSource, JmxSupport {
 
   private static final Logger LOG = LoggerFactory.getLogger(ScalableMeasurementRecorderSource.class);
 
@@ -86,7 +91,7 @@ public final class ScalableMeasurementRecorderSource implements
   private final Runnable shutdownHook;
 
   ScalableMeasurementRecorderSource(final MeasurementAccumulator processor,
-          final int sampleTimeMillis, final MeasurementStore database) {
+          final int sampleTimeMillis, final MeasurementStore database, final boolean closeOnShutdown) {
     if (sampleTimeMillis < 1000) {
       throw new IllegalArgumentException("sample time needs to be at least 1000 and not " + sampleTimeMillis);
     }
@@ -107,7 +112,11 @@ public final class ScalableMeasurementRecorderSource implements
     tableIds = new TObjectLongHashMap<>();
     persister = new Persister(database, sampleTimeMillis, processor);
     samplingFuture = DefaultScheduler.scheduleAllignedAtFixedRateMillis(persister, sampleTimeMillis);
-    shutdownHook = closeOnShutdown();
+    if (closeOnShutdown) {
+      shutdownHook = closeOnShutdown();
+    } else {
+      shutdownHook = null;
+    }
   }
 
   private Runnable closeOnShutdown() {
@@ -209,20 +218,33 @@ public final class ScalableMeasurementRecorderSource implements
   }
 
   @SuppressWarnings("unchecked")
+  @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
   public void registerJmx() {
     MeasurementsInfo info = this.processorTemplate.getInfo();
-    new DynamicMBeanBuilder().withJmxExportObject(this)
-            .withAttribute(new GenericExportedValue<>("measurements", info.getDescription(),
-                    this::getMeasurements, null, info.toCompositeType()))
-            .register("org.spf4j.perf.recorders", info.getMeasuredEntity().toString());
+     CompositeType targetType = addNameDescription(info.toCompositeType());
+    try {
+      String description = info.getDescription();
+      if (description.isEmpty()) {
+        description = "Dynamic measurements";
+      }
+      new DynamicMBeanBuilder().withJmxExportObject(this)
+              .withAttribute(new GenericExportedValue<>("measurements", description,
+                      this::getMeasurements, null, new TabularType(info.getMeasuredEntity().toString(),
+                              description, targetType, new String[]{"name"})))
+              .register("org.spf4j.perf.recorders", info.getMeasuredEntity().toString());
+    } catch (OpenDataException ex) {
+      throw new RuntimeException("Cannot create tabular type for " +  targetType, ex);
+    }
   }
 
   @Override
   @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
   public void close() {
-    synchronized (shutdownHook) {
+    synchronized (persister) {
       if (!samplingFuture.isCancelled()) {
-        org.spf4j.base.Runtime.removeQueuedShutdownHook(shutdownHook);
+        if (shutdownHook != null) {
+          org.spf4j.base.Runtime.removeQueuedShutdownHook(shutdownHook);
+        }
         samplingFuture.cancel(false);
         try {
           persister.persist(false);
@@ -258,42 +280,76 @@ public final class ScalableMeasurementRecorderSource implements
     return sw.toString();
   }
 
-  public CompositeDataSupport getMeasurements() {
-      Map<Object, MeasurementAccumulator> entitiesMeasurements = getEntitiesMeasurements();
-      MeasurementsInfo info = this.processorTemplate.getInfo();
-      int nrStuff = entitiesMeasurements.size();
-      String[] names = new String[nrStuff];
-      String[] descriptions = new String[nrStuff];
-      OpenType<?>[] types = new OpenType[nrStuff];
-      Object[] values = new Object[nrStuff];
-      int i = 0;
-      for (Map.Entry<Object, MeasurementAccumulator> entry : entitiesMeasurements.entrySet()) {
-        MeasurementAccumulator acc = entry.getValue();
-        MeasurementsInfo eInfo = acc.getInfo();
-        String cattrName = eInfo.getMeasuredEntity().toString();
-        names[i] = cattrName;
-        String cattrDesc = eInfo.getDescription();
-        if (cattrDesc.isEmpty()) {
-          cattrDesc = cattrName;
-        }
-        descriptions[i] = cattrDesc;
-        types[i] = eInfo.toCompositeType();
-        values[i] = acc.getCompositeData();
-        i++;
-      }
-     try {
+  static CompositeType addNameDescription(final CompositeType initType) {
+    Set<String> keys = initType.keySet();
+    int colNr = keys.size() + 2;
+    String[] names = new String[colNr];
+    String[] descrs = new String[colNr];
+    OpenType[] types = new OpenType[colNr];
+    names[0] = "name";
+    names[1] = "description";
+    descrs[0] = "metric name";
+    descrs[1] = "metric description";
+    types[0] = javax.management.openmbean.SimpleType.STRING;
+    types[1] = javax.management.openmbean.SimpleType.STRING;
+    int i = 2;
+    for (String key : keys) {
+      names[i] = key;
+      descrs[i] = initType.getDescription(key);
+      types[i++] = initType.getType(key);
+    }
+    try {
+      return new CompositeType(initType.getTypeName(), initType.getDescription(),
+              names, descrs, types);
+    } catch (OpenDataException ex) {
+      throw new IllegalArgumentException("Invalid type contructed from " + initType, ex);
+    }
+  }
+
+  static CompositeData addNameDescription(final CompositeType targetType, final CompositeData data,
+          final String name, final String description) {
+    Set<String> keySet = targetType.keySet();
+    int size = keySet.size();
+    Map<String, Object> vals = com.google.common.collect.Maps.newLinkedHashMapWithExpectedSize(size);
+    vals.put("name", name);
+    vals.put("description", description);
+    for (String key : data.getCompositeType().keySet()) {
+      vals.put(key, data.get(key));
+    }
+    try {
+      return new CompositeDataSupport(targetType, vals);
+    } catch (OpenDataException ex) {
+      throw new IllegalArgumentException("Invalid open data contructed from " + data, ex);
+    }
+  }
+
+  public TabularDataSupport getMeasurements() {
+    Map<Object, MeasurementAccumulator> entitiesMeasurements = getEntitiesMeasurements();
+    MeasurementsInfo info = this.processorTemplate.getInfo();
+    CompositeType targetType = addNameDescription(info.toCompositeType());
+    TabularDataSupport result;
+    try {
       String name = info.getMeasuredEntity().toString();
       String description = info.getDescription();
       if (description.isEmpty()) {
         description = name;
       }
-      CompositeType setType = new CompositeType(name, description, names, descriptions, types);
-      return new CompositeDataSupport(setType, names, values);
+      result = new TabularDataSupport(new TabularType(name, description, targetType, new String[]{"name"}));
     } catch (OpenDataException ex) {
-      throw new IllegalArgumentException("Not composite data compatible " + this, ex);
+      throw new RuntimeException("Enable to contruct tabular data " + entitiesMeasurements, ex);
     }
+    for (Map.Entry<Object, MeasurementAccumulator> entry : entitiesMeasurements.entrySet()) {
+      MeasurementAccumulator acc = entry.getValue();
+      MeasurementsInfo eInfo = acc.getInfo();
+      String cattrName = eInfo.getMeasuredEntity().toString();
+      String cattrDesc = eInfo.getDescription();
+      if (cattrDesc.isEmpty()) {
+        cattrDesc = cattrName;
+      }
+      result.put(addNameDescription(targetType, acc.getCompositeData(), cattrName, cattrDesc));
+    }
+    return result;
   }
-
 
   @JmxExport
   public void clear() {
@@ -306,7 +362,6 @@ public final class ScalableMeasurementRecorderSource implements
     private final int sampleTimeMillis;
     private final MeasurementAccumulator processor;
     private volatile long lastRun = 0;
-
 
     Persister(final MeasurementStore database, final int sampleTimeMillis,
             final MeasurementAccumulator processor) {

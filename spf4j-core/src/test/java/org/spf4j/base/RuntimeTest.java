@@ -41,23 +41,36 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.concurrent.DefaultExecutor;
 import org.spf4j.concurrent.DefaultScheduler;
+import org.spf4j.os.StdOutToStringProcessHandler;
+import org.spf4j.log.Level;
+import org.spf4j.test.log.LogCollection;
+import org.spf4j.test.log.TestLoggers;
+import org.spf4j.test.log.annotations.ExpectLog;
 
 /**
- *
  * @author zoly
  */
 public final class RuntimeTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(RuntimeTest.class);
 
   @Test
   public void testHaveJnaPlatform() {
     Assert.assertTrue(Runtime.haveJnaPlatform());
+  }
+
+  @Test
+  public void testSpecVersion() {
+    Assert.assertEquals(Runtime.Version.V1_8,  Runtime.Version.fromSpecVersion("1.8.0_151"));
   }
 
 
@@ -80,23 +93,25 @@ public final class RuntimeTest {
    */
   @Test
   public void testSomeParams() {
-    System.out.println("PID=" + Runtime.PID);
-    System.out.println("OSNAME=" + Runtime.OS_NAME);
+    LOG.debug("PID={}", Runtime.PID);
+    LOG.debug("OSNAME={}", Runtime.OS_NAME);
     int nrOpenFiles = Runtime.getNrOpenFiles();
-    System.out.println("NR_OPEN_FILES=" + nrOpenFiles);
+    LOG.debug("NR_OPEN_FILES={}", nrOpenFiles);
     Assert.assertThat(nrOpenFiles, Matchers.greaterThan(0));
     CharSequence lsofOutput = Runtime.getLsofOutput();
-    System.out.println("LSOF_OUT=" + lsofOutput);
+    LOG.debug("LSOF_OUT={}", lsofOutput);
     Assert.assertNotNull(lsofOutput);
     Assert.assertThat(lsofOutput.toString(), Matchers.containsString("jar"));
-    System.out.println("MAX_OPEN_FILES=" + OperatingSystem.getMaxFileDescriptorCount());
+    LOG.debug("MAX_OPEN_FILES={}", OperatingSystem.getMaxFileDescriptorCount());
   }
 
   @Test(expected = ExecutionException.class, timeout = 60000)
+  @ExpectLog(category = "org.spf4j.os", level = Level.ERROR, nrTimes = 2)
   public void testExitCode() throws IOException, InterruptedException, ExecutionException, TimeoutException {
     Runtime.jrun(RuntimeTest.TestError.class, 60000);
   }
 
+  @ExpectLog(category = "org.spf4j.os", level = Level.ERROR, nrTimes = 2)
   @Test(expected = ExecutionException.class, timeout = 60000)
   public void testExitCode2() throws IOException, InterruptedException, ExecutionException, TimeoutException {
     Runtime.jrun(RuntimeTest.TestError2.class, 60000);
@@ -104,7 +119,10 @@ public final class RuntimeTest {
 
   @Test(expected = TimeoutException.class, timeout = 30000)
   public void testExitCode3() throws IOException, InterruptedException, ExecutionException, TimeoutException {
+    LogCollection<Long> collect = TestLoggers.sys().collect(StdOutToStringProcessHandler.class.getName(), Level.ERROR,
+            Level.ERROR, false, Collectors.counting());
     Runtime.jrun(RuntimeTest.TestError3.class, 10000);
+    Assert.assertTrue(collect.get() > 0);
   }
 
   @Test(expected = InterruptedException.class, timeout = 30000)
@@ -113,11 +131,12 @@ public final class RuntimeTest {
     DefaultScheduler.INSTANCE.schedule(() -> {
       t.interrupt();
     }, 1, TimeUnit.SECONDS);
-    Runtime.jrun(RuntimeTest.TestError3.class, 10000);
+    Runtime.jrun(RuntimeTest.TestSleeping.class, 10000);
   }
 
   @SuppressFBWarnings("SIC_INNER_SHOULD_BE_STATIC_ANON")
   @Test(expected = CancellationException.class, timeout = 30000)
+//  @ExpectLog(level = Level.ERROR, category = "org.spf4j.os", nrTimes = 2)
   public void testExitCode5() throws InterruptedException, ExecutionException, TimeoutException {
     final CountDownLatch latch = new CountDownLatch(1);
     final CountDownLatch canCancel = new CountDownLatch(1);
@@ -129,23 +148,33 @@ public final class RuntimeTest {
           canCancel.countDown();
           Runtime.jrun(RuntimeTest.TestError3.class, 10000);
         } catch (InterruptedException ex) {
-          Throwables.writeTo(ex, System.err, Throwables.PackageDetail.SHORT);
+          LOG.info("Interrupted jrun TestError3", ex);
           latch.countDown();
         } catch (Exception ex) {
-          Throwables.writeTo(ex, System.err, Throwables.PackageDetail.SHORT);
+          LOG.info("Exception jrun TestError3", ex);
         }
       }
     });
     if (!canCancel.await(3000, TimeUnit.MILLISECONDS)) {
       Assert.fail("exec should happen");
     }
+    LOG.debug("cancelling {}", submit);
     submit.cancel(true);
-    if (!latch.await(15000, TimeUnit.SECONDS)) {
+    if (!latch.await(1, TimeUnit.SECONDS)) {
       Assert.fail("exec should be cancelled");
     }
     submit.get(10000, TimeUnit.MILLISECONDS);
 
   }
+
+  public static final class TestSleeping {
+
+    @SuppressFBWarnings("MDM_THREAD_YIELD")
+    public static void main(final String[] args) throws InterruptedException {
+      Thread.sleep(60000);
+    }
+  }
+
 
   public static final class TestError {
 

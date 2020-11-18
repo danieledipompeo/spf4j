@@ -57,6 +57,15 @@ public interface CLibrary extends LibCAPI, Library {
 
   int fork();
 
+  int gethostname(byte[] name, int len);
+
+  /**
+   * returns signal name from a signal number.
+   * @param sigNumber the signal number.
+   * @return the signal name.
+   */
+  String strsignal(int sigNumber);
+
   int kill(int pid, int signum);
 
   int setsid();
@@ -67,8 +76,18 @@ public interface CLibrary extends LibCAPI, Library {
 
   int umask(int mask);
 
+  /**
+   * Get current process id.
+   * https://www.systutorials.com/docs/linux/man/2-getppid/
+   * @return current process id.
+   */
   int getpid();
 
+  /**
+   * get parent process id.
+   * https://www.systutorials.com/docs/linux/man/2-getppid/
+   * @return parent process id.
+   */
   int getppid();
 
   int chdir(String dir);

@@ -44,6 +44,27 @@ public class CharSequencesTest {
 
 
   @Test
+  public void testDistance() {
+    Assert.assertEquals(3, CharSequences.distance("abc", "abcdef"));
+    Assert.assertEquals(3, CharSequences.distance("def", "abcdef"));
+    Assert.assertEquals(1, CharSequences.distance("abc", "bc"));
+    Assert.assertEquals(3, CharSequences.distance("abc", "def"));
+    Assert.assertEquals(1, CharSequences.distance("zoltran", "zoltan"));
+  }
+
+  @Test
+  public void testDistance2() {
+    Assert.assertEquals(3, CharSequences.distance("horse", "ros"));
+  }
+
+  @Test
+  public void testDistance3() {
+    Assert.assertEquals(27, CharSequences.distance("pneumonoultramicroscopicsilicovolcanoconiosis",
+            "ultramicroscopically"));
+  }
+
+
+  @Test
   public void testLineNumbering() {
     CharSequence lineNumbered = CharSequences.toLineNumbered(0, "a\nbla\nc");
     Assert.assertEquals("/* 0 */ a\n/* 1 */ bla\n/* 2 */ c", lineNumbered.toString());
@@ -88,5 +109,54 @@ public class CharSequencesTest {
     Assert.assertEquals("bla".compareTo("labl"),
             CharSequences.compare("cacablabla123", 4, 3, "ablabla/cucu", 2, 4));
   }
+
+  @Test
+  public void testCotains() {
+    Assert.assertTrue(CharSequences.containsIgnoreCase("asdgafsdHgas", ""));
+    Assert.assertTrue(CharSequences.containsIgnoreCase("asdgafsdHgas", "sdh"));
+    Assert.assertFalse(CharSequences.containsIgnoreCase("asdgafsdHgas", "sdhf"));
+  }
+
+  @Test
+  public void testUnsignedIntegerParsing() {
+    int val = CharSequences.parseUnsignedInt("  1234  ", 10, 2);
+    Assert.assertEquals(1234, val);
+    val = CharSequences.parseUnsignedInt("  " + Integer.MAX_VALUE + "  ", 10, 2);
+    Assert.assertEquals(Integer.MAX_VALUE, val);
+    try {
+      CharSequences.parseUnsignedInt("  " + Integer.MAX_VALUE + "1  ", 10, 2);
+      Assert.fail();
+    } catch (NumberFormatException ex) {
+      // expected
+    }
+  }
+
+  @Test
+  public void testUnsignedLongParsing() {
+    long val = CharSequences.parseUnsignedLong("  1234  ", 10, 2);
+    Assert.assertEquals(1234L, val);
+    val = CharSequences.parseUnsignedLong("  " + Long.MAX_VALUE + "  ", 10, 2);
+    Assert.assertEquals(Long.MAX_VALUE, val);
+    try {
+      CharSequences.parseUnsignedLong("  " + Long.MAX_VALUE + "1  ", 10, 2);
+      Assert.fail();
+    } catch (NumberFormatException ex) {
+      // expected
+    }
+  }
+
+  @Test(expected = NumberFormatException.class)
+  public void testUnsignedInvalidLongParsing() {
+    CharSequences.parseUnsignedLong("abc", 10, 0);
+  }
+
+  @Test
+  public void testOccurenceCount() {
+    Assert.assertEquals(3, CharSequences.countIgnoreCase(" aab Aab aaab", "aab"));
+    Assert.assertEquals(0, CharSequences.countIgnoreCase("", "aab"));
+    Assert.assertEquals(0, CharSequences.countIgnoreCase(" ", "aab"));
+    Assert.assertEquals(0, CharSequences.countIgnoreCase(" ", ""));
+  }
+
 
 }

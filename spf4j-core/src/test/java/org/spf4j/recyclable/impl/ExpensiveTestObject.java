@@ -34,8 +34,10 @@ package org.spf4j.recyclable.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.channels.ClosedChannelException;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.apache.http.ConnectionClosedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This is a pooled object implementation, that behaves like a connection object.
@@ -45,9 +47,11 @@ import org.apache.http.ConnectionClosedException;
 @SuppressFBWarnings("PREDICTABLE_RANDOM") //not security related
 public final class ExpensiveTestObject implements Closeable {
 
+  private static final Logger LOG = LoggerFactory.getLogger(ExpensiveTestObject.class);
+
   private static final AtomicInteger OBJ_COUNT = new AtomicInteger();
 
-  private static volatile boolean FAILALL = false;
+  private static volatile boolean failAll = false;
 
   private final long maxIdleMillis;
   private final int nrUsesToFailAfter;
@@ -58,11 +62,11 @@ public final class ExpensiveTestObject implements Closeable {
   private final String id;
 
   public static boolean isFAILALL() {
-    return FAILALL;
+    return failAll;
   }
 
-  public static void setFAILALL(final boolean FAILALL) {
-    ExpensiveTestObject.FAILALL = FAILALL;
+  public static void setFailAll(final boolean failAll) {
+    ExpensiveTestObject.failAll = failAll;
   }
 
   @SuppressFBWarnings("STT_TOSTRING_STORED_IN_FIELD")
@@ -79,12 +83,12 @@ public final class ExpensiveTestObject implements Closeable {
   }
 
   public void doStuff() throws IOException {
-    if (FAILALL) {
+    if (failAll) {
       throw new IOExceptionImpl("Failall " + id);
     }
     long currentTime = System.currentTimeMillis();
     if (currentTime - lastTouchedTimeMillis > maxIdleMillis) {
-      throw new ConnectionClosedException("Connection closed for " + id);
+      throw new ClosedChannelException();
     }
     if (nrUses > nrUsesToFailAfter) {
       throw new IOExceptionImpl("Simulated random crap " + id);
@@ -95,7 +99,7 @@ public final class ExpensiveTestObject implements Closeable {
   }
 
   public void testObject() throws IOException {
-    System.out.println("Test " + id);
+    LOG.debug("Testing object {}", id);
     long currentTime = System.currentTimeMillis();
     if (currentTime - lastTouchedTimeMillis > maxIdleMillis) {
       throw new IOException("Connection closed " + id);
@@ -133,7 +137,7 @@ public final class ExpensiveTestObject implements Closeable {
 
   private static final class IOExceptionImpl extends IOException {
 
-    public IOExceptionImpl(String message) {
+    IOExceptionImpl(final String message) {
       super(message);
     }
 

@@ -31,19 +31,16 @@
  */
 package org.spf4j.base;
 
-import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.HashBiMap;
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.beans.ConstructorProperties;
 import java.io.IOException;
-import java.io.Serializable;
 import java.lang.annotation.Annotation;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -54,56 +51,44 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
 import java.net.URL;
 import java.security.AccessController;
-import java.security.CodeSource;
 import java.security.PrivilegedAction;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.jar.JarInputStream;
 import java.util.jar.Manifest;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.spf4j.concurrent.UnboundedLoadingCache;
 
 @ParametersAreNonnullByDefault
+@SuppressFBWarnings("PMB_POSSIBLE_MEMORY_BLOAT") // PRIMITIVES is private.
 public final class Reflections {
 
-  private static final Logger LOG = LoggerFactory.getLogger(Reflections.class);
-
-  private static final PackageInfo NONE = new PackageInfo(null, null);
-
-  private static final BiMap<Class<?>, Class<?>> PRIMITIVE_MAP = HashBiMap.create(8);
-
-  static {
-    PRIMITIVE_MAP.put(boolean.class, Boolean.class);
-    PRIMITIVE_MAP.put(byte.class, Byte.class);
-    PRIMITIVE_MAP.put(char.class, Character.class);
-    PRIMITIVE_MAP.put(short.class, Short.class);
-    PRIMITIVE_MAP.put(int.class, Integer.class);
-    PRIMITIVE_MAP.put(long.class, Long.class);
-    PRIMITIVE_MAP.put(float.class, Float.class);
-    PRIMITIVE_MAP.put(double.class, Double.class);
-  }
-
+  private static final BiMap<Class<?>, Class<?>> PRIMITIVE_MAP = HashBiMap.create(12);
+  private static final Map<String, Class<?>> PRIMITIVES = new HashMap<>(12);
 
   private static final MethodHandle PARAMETER_TYPES_METHOD_FIELD_GET;
   private static final MethodHandle PARAMETER_TYPES_CONSTR_FIELD_GET;
-
+  private static final MethodHandle FIND_CLASS;
 
   static {
+    initPrimitiveMap();
     Field mPtField = AccessController.doPrivileged((PrivilegedAction<Field>) () -> {
       Field f;
       try {
         f = Method.class.getDeclaredField("parameterTypes");
         f.setAccessible(true);
-      } catch (NoSuchFieldException ex) {
-        LOG.info("Para type stealing from Method not supported", ex);
+      } catch (NoSuchFieldException | SecurityException ex) {
+        Logger.getLogger(Reflections.class.getName()).log(Level.INFO,
+                "Para type stealing from Method not supported", ex);
         f = null;
-      } catch (SecurityException ex) {
-        throw new RuntimeException(ex);
       }
       return f;
     });
@@ -112,11 +97,10 @@ public final class Reflections {
       try {
         f = Constructor.class.getDeclaredField("parameterTypes");
         f.setAccessible(true);
-      } catch (NoSuchFieldException ex) {
-        LOG.info("Para type stealing from Constructor not supported", ex);
+      } catch (NoSuchFieldException | SecurityException ex) {
+        Logger.getLogger(Reflections.class.getName()).log(Level.INFO,
+                "Para type stealing from Constructor not supported", ex);
         f = null;
-      } catch (SecurityException ex) {
-        throw new RuntimeException(ex);
       }
       return f;
     });
@@ -140,7 +124,41 @@ public final class Reflections {
     } else {
       PARAMETER_TYPES_CONSTR_FIELD_GET = null;
     }
+
+    final Method fc = AccessController.doPrivileged((PrivilegedAction<Method>) () -> {
+      Method m;
+      try {
+        m = ClassLoader.class.getDeclaredMethod("findLoadedClass", String.class);
+        m.setAccessible(true);
+      } catch (NoSuchMethodException | SecurityException ex) {
+        throw new ExceptionInInitializerError(ex);
+      }
+      return m;
+    });
+    try {
+      FIND_CLASS = lookup.unreflect(fc);
+    } catch (IllegalAccessException ex) {
+      throw new ExceptionInInitializerError(ex);
+    }
+
   }
+
+  @SuppressFBWarnings("RV_RETURN_VALUE_IGNORED")
+  private static void initPrimitiveMap() {
+    PRIMITIVE_MAP.put(boolean.class, Boolean.class);
+    PRIMITIVE_MAP.put(byte.class, Byte.class);
+    PRIMITIVE_MAP.put(char.class, Character.class);
+    PRIMITIVE_MAP.put(short.class, Short.class);
+    PRIMITIVE_MAP.put(int.class, Integer.class);
+    PRIMITIVE_MAP.put(long.class, Long.class);
+    PRIMITIVE_MAP.put(float.class, Float.class);
+    PRIMITIVE_MAP.put(double.class, Double.class);
+    PRIMITIVE_MAP.put(void.class, Void.class);
+    for (Class<?> clasz : PRIMITIVE_MAP.keySet()) {
+      PRIMITIVES.put(clasz.getName(), clasz);
+    }
+  }
+
 
   private Reflections() { }
 
@@ -196,6 +214,7 @@ public final class Reflections {
     }
   }
 
+  @Nonnull
   public static Type primitiveToWrapper(final Type type) {
     if (type instanceof Class && ((Class) type).isPrimitive()) {
       return PRIMITIVE_MAP.get((Class) type);
@@ -222,8 +241,8 @@ public final class Reflections {
       if (method.getName().equals(attributeName)) {
         try {
           return method.invoke(annot);
-        } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
-          throw new RuntimeException(ex);
+        } catch (IllegalAccessException | InvocationTargetException ex) {
+          throw new UncheckedExecutionException(ex);
         }
       }
     }
@@ -241,21 +260,46 @@ public final class Reflections {
    */
   @Nullable
   @SuppressFBWarnings(value = "ES_COMPARING_STRINGS_WITH_EQ", justification = "comparing interned strings")
-  public static Method getMethod(final Class<?> c,
+  public static Method getDeclaredMethod(final Class<?> c,
           final String methodName,
           final Class<?>... paramTypes) {
-
     String internedName = methodName.intern();
     for (Method m : c.getDeclaredMethods()) {
       if (m.getName() == internedName
               && Arrays.equals(paramTypes, getParameterTypes(m))) {
-        AccessController.doPrivileged(new PrivilegedAction<Void>() {
-          @Override
-          public Void run() {
-             m.setAccessible(true);
-             return null;
-          }
-        });
+        if (!m.isAccessible()) {
+          AccessController.doPrivileged(new PrivilegedAction<Void>() {
+            @Override
+            public Void run() {
+               m.setAccessible(true);
+               return null;
+            }
+          });
+        }
+        return m;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Equivalent to Class.getDeclaredMethod which returns a null instead of throwing an exception.
+   * returned method is also made accessible.
+   *
+   * @param c
+   * @param methodName
+   * @param paramTypes
+   * @return
+   */
+  @Nullable
+  @SuppressFBWarnings(value = "ES_COMPARING_STRINGS_WITH_EQ", justification = "comparing interned strings")
+  public static Method getMethod(final Class<?> c,
+          final String methodName,
+          final Class<?>... paramTypes) {
+    String internedName = methodName.intern();
+    for (Method m : c.getMethods()) {
+      if (m.getName() == internedName
+              && Arrays.equals(paramTypes, getParameterTypes(m))) {
         return m;
       }
     }
@@ -456,14 +500,14 @@ public final class Reflections {
 
   }
 
-  private static final LoadingCache<MethodDesc, Holder<Method>> CACHE_FAST
+  private static final LoadingCache<MethodDesc, Optional<Method>> CACHE_FAST
           = new UnboundedLoadingCache<>(64,
-                  new CacheLoader<MethodDesc, Holder<Method>>() {
+                  new CacheLoader<MethodDesc, Optional<Method>>() {
             @Override
-            public Holder<Method> load(final MethodDesc k) {
+            public Optional<Method> load(final MethodDesc k) {
               final Method m = getCompatibleMethod(k.getClasz(), k.getName(), k.getParamTypes());
               if (m == null) {
-                return Holder.OF_NULL;
+                return Optional.empty();
               }
               AccessController.doPrivileged(new PrivilegedAction() {
                 @Override
@@ -472,7 +516,7 @@ public final class Reflections {
                   return null; // nothing to return
                 }
               });
-              return Holder.of(m);
+              return Optional.of(m);
             }
           });
 
@@ -480,7 +524,7 @@ public final class Reflections {
   public static Method getCompatibleMethodCached(final Class<?> c,
           final String methodName,
           final Class<?>... paramTypes) {
-    return CACHE_FAST.getUnchecked(new MethodDesc(c, methodName, paramTypes)).getValue();
+    return CACHE_FAST.getUnchecked(new MethodDesc(c, methodName, paramTypes)).orElse(null);
   }
 
   private static final LoadingCache<MethodDesc, MethodHandle> CACHE_FAST_MH
@@ -500,22 +544,6 @@ public final class Reflections {
 
 
   /**
-   * Useful to get the jar URL where a particular class is located.
-   *
-   * @param clasz
-   * @return
-   */
-  @Nullable
-  public static URL getJarSourceUrl(final Class<?> clasz) {
-    final CodeSource codeSource = clasz.getProtectionDomain().getCodeSource();
-    if (codeSource == null) {
-      return null;
-    } else {
-      return codeSource.getLocation();
-    }
-  }
-
-  /**
    * Get the manifest of a jar file.
    *
    * @param jarUrl
@@ -523,109 +551,20 @@ public final class Reflections {
    * @throws IOException
    */
   @Nullable
-  @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
+  @SuppressFBWarnings({ "NP_LOAD_OF_KNOWN_NULL_VALUE", "URLCONNECTION_SSRF_FD" })
   public static Manifest getManifest(@Nonnull final URL jarUrl) throws IOException {
     try (JarInputStream jis = new JarInputStream(jarUrl.openStream())) {
       return jis.getManifest();
     }
   }
 
-  public static final class PackageInfo implements Serializable {
-
-    private static final long serialVersionUID = 1L;
-
-    private final String url;
-    private final String version;
-
-    @ConstructorProperties({"url", "version"})
-    public PackageInfo(@Nullable final String url, @Nullable final String version) {
-      this.url = url;
-      this.version = version;
-    }
-
-    @Nullable
-    public String getUrl() {
-      return url;
-    }
-
-    @Nullable
-    public String getVersion() {
-      return version;
-    }
-
-    @Override
-    @SuppressFBWarnings("DMI_BLOCKING_METHODS_ON_URL")
-    public int hashCode() {
-      if (url != null) {
-        return url.hashCode();
-      } else {
-        return 0;
-      }
-    }
-
-    public boolean hasInfo() {
-      return url != null || version != null;
-    }
-
-    @Override
-    public boolean equals(final Object obj) {
-      if (obj == null) {
-        return false;
-      }
-      if (getClass() != obj.getClass()) {
-        return false;
-      }
-      final PackageInfo other = (PackageInfo) obj;
-      if (!java.util.Objects.equals(this.url, other.url)) {
-        return false;
-      }
-      return java.util.Objects.equals(this.version, other.version);
-    }
-
-    @Override
-    public String toString() {
-      return "PackageInfo{" + "url=" + url + ", version=" + version + '}';
-    }
-
-  }
-
-  @Nonnull
-  public static PackageInfo getPackageInfoDirect(@Nonnull final String className) {
-    Class<?> aClass;
-    try {
-      aClass = Class.forName(className);
-    } catch (ClassNotFoundException | NoClassDefFoundError ex) { // NoClassDefFoundError if class fails during init.
-      return NONE;
-    }
-    return getPackageInfoDirect(aClass);
-  }
-
-  @Nonnull
-  public static PackageInfo getPackageInfoDirect(@Nonnull final Class<?> aClass) {
-    URL jarSourceUrl = Reflections.getJarSourceUrl(aClass);
-    final Package aPackage = aClass.getPackage();
-    if (aPackage == null) {
-      return NONE;
-    }
-    String version = aPackage.getImplementationVersion();
-    return new PackageInfo(jarSourceUrl == null ? "" : jarSourceUrl.toString(), version);
-  }
-
-  @Nonnull
-  public static PackageInfo getPackageInfo(@Nonnull final String className) {
-    return CACHE.getUnchecked(className);
-  }
-
-  private static final LoadingCache<String, PackageInfo> CACHE = CacheBuilder.newBuilder()
-          .weakKeys().weakValues().build(new CacheLoader<String, PackageInfo>() {
-
-            @Override
-            public PackageInfo load(final String key) {
-              return getPackageInfoDirect(key);
-            }
-          });
-
-
+  /**
+   * create a proxy instance that will proxy interface methods to static methods on the target class.
+   * @param <T>
+   * @param clasz
+   * @param target
+   * @return
+   */
   public static <T> T implementStatic(final Class<T> clasz, final Class<?> target) {
 
     Method[] methods = clasz.getMethods();
@@ -661,5 +600,112 @@ public final class Reflections {
                     map.get(method).invoke(target, args));
   }
 
+
+  @Nullable
+  public static Class<?> getLoadedClass(final ClassLoader cl, final String className) {
+    try {
+      return (Class<?>) FIND_CLASS.invoke(cl, className);
+    } catch (RuntimeException | Error ex) {
+      throw ex;
+    } catch (Throwable ex) {
+      throw new UncheckedExecutionException(ex);
+    }
+
+  }
+
+  /**
+   * utility method that will work for primittives as well.
+   * @param name the class name
+   * @return
+   * @throws ClassNotFoundException
+   */
+  public static Class<?> forName(final String name) throws ClassNotFoundException {
+    Class<?> primitive = PRIMITIVES.get(name);
+    if (primitive == null) {
+      return Class.forName(name);
+    } else {
+      return primitive;
+    }
+  }
+
+  /**
+   * utility method that will work for primitives as well.
+   * @param name the class name
+   * @param loader the class loader
+   * @return
+   * @throws ClassNotFoundException
+   */
+  public static Class<?> forName(final String name, final ClassLoader loader) throws ClassNotFoundException {
+    Class<?> primitive = PRIMITIVES.get(name);
+    if (primitive == null) {
+      return Class.forName(name, true, loader);
+    } else {
+      return primitive;
+    }
+  }
+
+  public static List<Type> getImplementedGenericInterfaces(final Class<?> clasz) {
+    Type[] genericInterfaces = clasz.getGenericInterfaces();
+    Class<?> superclass = clasz.getSuperclass();
+    if (superclass == null) {
+      return Arrays.asList(genericInterfaces);
+    } else {
+      List<Type> result = new ArrayList<>(genericInterfaces.length);
+      for (Type type : genericInterfaces) {
+        result.add(type);
+      }
+      result.addAll(getImplementedGenericInterfaces(superclass));
+      return result;
+    }
+  }
+
+  @Nullable
+  public static <A extends Annotation> A getInheritedAnnotation(
+          final Class<A> annotationClass, final AnnotatedElement element) {
+    A annotation = element.getAnnotation(annotationClass);
+    if (annotation == null && element instanceof Method) {
+      annotation = getOverriddenAnnotation(annotationClass, (Method) element);
+    }
+    return annotation;
+  }
+
+  @Nullable
+  private static <A extends Annotation> A getOverriddenAnnotation(
+          final Class<A> annotationClass, final Method method) {
+    final Class<?> methodClass = method.getDeclaringClass();
+    final String name = method.getName();
+    final Class<?>[] params = method.getParameterTypes();
+    final Class<?> superclass = methodClass.getSuperclass();
+    if (superclass != null) {
+      final A annotation
+              = getOverriddenMethodAnnotationFrom(annotationClass, superclass, name, params);
+      if (annotation != null) {
+        return annotation;
+      }
+    }
+    for (final Class<?> intf : methodClass.getInterfaces()) {
+      final A annotation = getOverriddenMethodAnnotationFrom(annotationClass, intf, name, params);
+      if (annotation != null) {
+        return annotation;
+      }
+    }
+
+    return null;
+  }
+
+  @Nullable
+  private static <A extends Annotation> A getOverriddenMethodAnnotationFrom(
+          final Class<A> annotationClass, final Class<?> searchClass,
+          final String methodName, final Class<?>[] params) {
+      final Method method = getMethod(searchClass, methodName, params);
+      if (method == null) {
+        return null;
+      }
+      final A annotation = method.getAnnotation(annotationClass);
+      if (annotation != null) {
+        return annotation;
+      }
+      return getOverriddenAnnotation(annotationClass, method);
+  }
 
 }

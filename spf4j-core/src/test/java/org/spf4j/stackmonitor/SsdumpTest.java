@@ -33,57 +33,73 @@ package org.spf4j.stackmonitor;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.PrintWriter;
-import java.io.StringWriter;
 import java.util.Map;
+import org.hamcrest.Matchers;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
-import org.spf4j.ds.Traversals;
-import org.spf4j.ds.Graph;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.base.ExecutionContext;
+import org.spf4j.base.ExecutionContexts;
+import org.spf4j.log.Level;
 import org.spf4j.ssdump2.Converter;
+import org.spf4j.test.log.annotations.ExpectLog;
 
 public final class SsdumpTest {
 
-    @BeforeClass
-    public static void init() {
-        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-            @Override
-            public void uncaughtException(final Thread t, final Throwable e) {
-                StringWriter strw = new StringWriter();
-                e.printStackTrace(new PrintWriter(strw));
-                Assert.fail("Got Exception: " + strw);
-            }
-        });
+  static {
+    System.setProperty("spf4j.execContext.tlAttacherClass", ProfilingTLAttacher.class.getName());
+    System.setProperty("spf4j.execContext.factoryClass", ProfiledExecutionContextFactory.class.getName());
+  }
+
+  private static final Logger LOG = LoggerFactory.getLogger(SsdumpTest.class);
+
+
+  @Test
+  public void testDumpExecContexts() throws InterruptedException, IOException {
+    ProfilingTLAttacher contextFactory = (ProfilingTLAttacher) ExecutionContexts.threadLocalAttacher();
+    Sampler sampler = new Sampler(1, (t) -> new ThreadStackSampler(contextFactory::getCurrentThreads));
+    Map<String, SampleNode> collected = sampleTest(sampler, "ecStackSample");
+    Assert.assertEquals("Actual: " + collected,  1, collected.size());
+  }
+
+  @Test
+  @ExpectLog(level = Level.DEBUG, messageRegexp = "Stack samples")
+  public void testTracingDumpExecContexts() throws InterruptedException, IOException {
+    ProfilingTLAttacher contextFactory =
+            (ProfilingTLAttacher) ExecutionContexts.threadLocalAttacher();
+
+    Sampler sampler = new Sampler(1,
+            (t) -> new ThreadSpecificTracingExecutionContextHandler(contextFactory::getCurrentThreadContexts,
+                    ExecutionContext::getName));
+    Map<String, SampleNode> collected = sampleTest(sampler, "ecTracingStackSample");
+    Assert.assertThat(collected.keySet(), Matchers.hasItems(
+            Matchers.equalTo("testThread"), Matchers.containsString("org.spf4j.stackmonitor.SsdumpTest")));
+
+  }
+
+
+
+  @Test
+  public void testDumpDefault() throws InterruptedException, IOException {
+    Sampler sampler = new Sampler(1);
+    sampleTest(sampler, "stackSample");
+  }
+
+  public Map<String, SampleNode> sampleTest(final Sampler sampler, final String filename)
+          throws InterruptedException, IOException {
+    sampler.registerJmx();
+    sampler.start();
+    MonitorTest.main(new String[]{});
+    final File serializedFile = File.createTempFile(filename, ".ssdump3");
+    Map<String, SampleNode> collected = sampler.getStackCollectionsAndReset();
+    Converter.saveLabeledDumps(serializedFile, collected);
+    LOG.debug("Dumped to file {}", serializedFile);
+    sampler.stop();
+    Map<String, SampleNode> loadedDumps = Converter.loadLabeledDumps(serializedFile);
+    for (Map.Entry<String, SampleNode> entry : loadedDumps.entrySet()) {
+      LOG.debug("Loaded {}", entry.getKey());
     }
-
-    @Test
-    public void testProto() throws InterruptedException, IOException  {
-
-        Sampler sampler = new Sampler(1);
-        sampler.registerJmx();
-        sampler.start();
-        MonitorTest.main(new String[]{});
-        final File serializedFile = File.createTempFile("stackSample", ".samp");
-        sampler.getStackCollector().applyOnSamples((final SampleNode f) -> {
-          if (f != null) {
-            try {
-              Converter.save(serializedFile, f);
-            } catch (IOException ex) {
-              throw new RuntimeException(ex);
-            }
-
-          }
-          return f;
-        });
-        sampler.stop();
-        final SampleNode samples = Converter.load(serializedFile);
-        Graph<InvokedMethod, SampleNode.InvocationCount> graph = SampleNode.toGraph(samples);
-        Traversals.traverse(graph, InvokedMethod.ROOT,
-                (final InvokedMethod vertex, final Map<SampleNode.InvocationCount, InvokedMethod> edges) -> {
-          System.out.println("Method: " + vertex + " from " + edges);
-        }, true);
-        Assert.assertNotNull(graph);
-
-    }
+    return collected;
+  }
 }

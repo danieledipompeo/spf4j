@@ -31,7 +31,6 @@
  */
 package org.spf4j.zel.vm;
 
-import com.google.common.base.Function;
 import com.google.common.collect.Interner;
 import com.google.common.collect.Interners;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -41,6 +40,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import javax.annotation.Nullable;
 import org.spf4j.base.Pair;
 import org.spf4j.zel.instr.CALLA;
 import org.spf4j.zel.instr.Instruction;
@@ -56,7 +57,7 @@ public final class ProgramBuilder {
     private static final int DEFAULT_SIZE = 16;
 
     private static final AtomicInteger COUNTER = new AtomicInteger();
-    
+
     private Instruction[] instructions;
 
     private final List<Location> debugInfo;
@@ -119,8 +120,10 @@ public final class ProgramBuilder {
 
 
     public ProgramBuilder add(final Instruction object, final Location loc) {
-        ensureCapacity(instrNumber + 1);
-        instructions[instrNumber++] = object;
+        int nSize = instrNumber + 1;
+        ensureCapacity(nSize);
+        instructions[instrNumber] = object;
+        instrNumber = nSize;
         debugInfo.add(loc);
         return this;
     }
@@ -133,6 +136,7 @@ public final class ProgramBuilder {
         return res;
     }
 
+    @Nullable
     public <T> T itterate(final Function<Object, T> func) {
          for (int i = 0; i < instrNumber; i++) {
             Instruction code = instructions[i];
@@ -158,14 +162,6 @@ public final class ProgramBuilder {
     }
 
 
-
-    public ProgramBuilder set(final int idx, final Instruction object) {
-        ensureCapacity(idx + 1);
-        instructions[idx] = object;
-        instrNumber = Math.max(idx + 1, instrNumber);
-        return this;
-    }
-
     public ProgramBuilder addAll(final Instruction[] objects, final List<Location> debug) {
         ensureCapacity(instrNumber + objects.length);
         System.arraycopy(objects, 0, instructions, instrNumber, objects.length);
@@ -174,12 +170,6 @@ public final class ProgramBuilder {
         return this;
     }
 
-//    public ProgramBuilder setAll(final int idx, final Object[] objects) {
-//        ensureCapacity(idx + objects.length);
-//        System.arraycopy(objects, 0, instructions, idx, objects.length);
-//        instrNumber = Math.max(objects.length + idx, instrNumber);
-//        return this;
-//    }
 
     public ProgramBuilder addAll(final ProgramBuilder opb) {
         ensureCapacity(instrNumber + opb.instrNumber);
@@ -231,7 +221,7 @@ public final class ProgramBuilder {
         return hasAsyncCalls;
     }
 
-    public Program toProgram(final String name, final String source, final String[] parameterNames)
+    public Program toProgram(final String name, final String source, final String... parameterNames)
             throws CompileException {
        return toProgram(name, source, parameterNames, Collections.EMPTY_MAP);
     }
@@ -270,7 +260,8 @@ public final class ProgramBuilder {
     private static final class HasDeterministicFunc implements Function<Object, Boolean> {
 
         @Override
-        @SuppressFBWarnings("TBP_TRISTATE_BOOLEAN_PATTERN")
+        @SuppressFBWarnings({ "TBP_TRISTATE_BOOLEAN_PATTERN", "NP_BOOLEAN_RETURN_NULL" })
+        @Nullable
         public Boolean apply(final Object input) {
             if (input instanceof Program) {
                 Program prog = (Program) input;
@@ -286,7 +277,9 @@ public final class ProgramBuilder {
     private static final class HasAsyncFunc implements Function<Object, Boolean> {
 
         @Override
-        @SuppressFBWarnings({ "TBP_TRISTATE_BOOLEAN_PATTERN", "ITC_INHERITANCE_TYPE_CHECKING" })
+        @SuppressFBWarnings({ "TBP_TRISTATE_BOOLEAN_PATTERN",
+          "ITC_INHERITANCE_TYPE_CHECKING", "NP_BOOLEAN_RETURN_NULL" })
+        @Nullable
         public Boolean apply(final Object input) {
             if (input instanceof Program) {
                 Program prog = (Program) input;

@@ -53,12 +53,13 @@ import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.LinkedList;
 import java.util.List;
+import javax.annotation.Nullable;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.ToolTipManager;
-import org.spf4j.base.Method;
 import org.spf4j.base.Pair;
+import org.spf4j.base.avro.Method;
 import org.spf4j.ds.RTree;
 import org.spf4j.stackmonitor.SampleNode;
 
@@ -72,19 +73,22 @@ public abstract class StackPanelBase<T> extends JPanel
   //CHECKSTYLE:OFF
   private SampleNode samples;
   private Method method;
-  private RTree<Sampled<T>> samplesRTree = new RTree<>();
+  private RTree<T> samplesRTree = new RTree<>();
   protected int xx;
   protected int yy;
   //CHECKSTYLE:ON
   private final JPopupMenu menu;
   private final LinkedList<Pair<Method, SampleNode>> history;
+  private volatile BufferedImage img;
+  private volatile int imgWidth;
 
   public static final Color LINK_COLOR = new Color(128, 128, 128, 128);
 
-  public StackPanelBase(final SampleNode samples) {
+  public StackPanelBase(final Method method,
+          final SampleNode samples, final LinkedList<Pair<Method, SampleNode>> history) {
     this.samples = samples;
-    this.method = Method.ROOT;
-    history = new LinkedList<>();
+    this.method = method;
+    this.history = history;
     setPreferredSize(new Dimension(400, 20 * samples.height() + 10));
     final ToolTipManager sharedInstance = ToolTipManager.sharedInstance();
     sharedInstance.registerComponent(this);
@@ -93,20 +97,25 @@ public abstract class StackPanelBase<T> extends JPanel
     addMouseListener(this);
   }
 
-  public final List<Sampled<T>> search(final int x, final int y, final int w, final int h) {
+  public final List<T> search(final int x, final int y, final int w, final int h) {
     return samplesRTree.search(new float[]{x, y}, new float[]{w, h});
   }
 
-  public final List<Sampled<T>> search(final double x, final double y, final double w, final double h) {
+  public final List<T> search(final double x, final double y, final double w, final double h) {
     return samplesRTree.search(new float[]{(float) x, (float) y}, new float[]{(float) w, (float) h});
   }
 
-  public final void insert(final int x, final int y, final int w, final int h, final Sampled sampled) {
+  public final void insert(final int x, final int y, final int w, final int h, final T sampled) {
     samplesRTree.insert(new float[]{x, y}, new float[]{w, h}, sampled);
   }
 
-  public final void insert(final double x, final double y, final double w, final double h, final Sampled sampled) {
+  public final void insert(final double x, final double y, final double w, final double h, final T sampled) {
     samplesRTree.insert(new float[]{(float) x, (float) y}, new float[]{(float) w, (float) h}, sampled);
+  }
+
+  public final void insert(final Rectangle2D.Double rect, final T sampled) {
+    samplesRTree.insert(new float[]{(float) rect.getX(), (float) rect.getY()},
+            new float[]{(float) rect.getWidth(), (float) rect.getHeight()}, sampled);
   }
 
   // disable finbugs since I don't care about internationalization for now.
@@ -139,34 +148,47 @@ public abstract class StackPanelBase<T> extends JPanel
   }
 
   @Override
+  @SuppressFBWarnings("FE_FLOATING_POINT_EQUALITY") //its ok in this case, since I am detecting changes.
   public final void paintComponent(final Graphics g) {
     super.paintComponent(g);
     Dimension size = getSize();
     Insets insets = getInsets();
-    Rectangle2D available = new Rectangle2D.Double(insets.left, insets.top,
-            size.getWidth() - insets.left - insets.right,
-            size.getHeight() - insets.top - insets.bottom);
     Graphics2D g2 = (Graphics2D) g.create();
     try {
-      double rowHeight = g2.getFont().getStringBounds("ROOT", g2.getFontRenderContext()).getHeight();
-
-      GraphicsConfiguration gc = g2.getDeviceConfiguration();
-      BufferedImage img = gc.createCompatibleImage(
-              (int) available.getWidth(), (int) available.getHeight(),
-              Transparency.TRANSLUCENT);
-
-      double width = available.getWidth();
-      samplesRTree.clear();
-      Graphics2D gr = img.createGraphics();
-      gr.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-      int height = paint(gr, width, rowHeight);
+      int width1 = (int) size.getWidth();
+      if (img == null || imgWidth != width1) {
+        double rowHeight = g2.getFont().getStringBounds("ROOT", g2.getFontRenderContext()).getHeight() + 2;
+        img = paintImage(g2, width1 - insets.left - insets.right, rowHeight);
+        Dimension dimension = new Dimension(img.getWidth(), img.getHeight());
+        setPreferredSize(dimension);
+        imgWidth = width1;
+      }
       g2.drawImage(img, insets.left, insets.top, this);
-      final Dimension dimension = new Dimension((int) size.getWidth(), height + 10);
-      setPreferredSize(dimension);
-      setSize(dimension);
     } finally {
       g2.dispose();
     }
+  }
+
+  private BufferedImage paintImage(final Graphics2D g2, final int width, final double rowHeight) {
+    GraphicsConfiguration gc = g2.getDeviceConfiguration();
+    int height = 5000;
+    BufferedImage limg;
+    do {
+      limg = gc.createCompatibleImage(width, height, Transparency.TRANSLUCENT);
+      Graphics2D gr = limg.createGraphics();
+      gr.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+      int nheight = repaint(gr, width, rowHeight) + 10;
+      gr.dispose();
+      if (nheight < height) {
+        return limg.getSubimage(0, 0, width, nheight);
+      }
+      height = nheight;
+    } while (true);
+  }
+
+  private int repaint(final Graphics2D gr, final double width, final double rowHeight) {
+    samplesRTree.clear();
+    return paint(gr, width, rowHeight);
   }
 
   public abstract int paint(Graphics2D gr, double width, double rowHeight);
@@ -270,6 +292,7 @@ public abstract class StackPanelBase<T> extends JPanel
     //CHECKSTYLE:ON
     this.samples = n;
     this.method = m;
+    this.img = null;
   }
 
   public final SampleNode getSamples() {
@@ -280,6 +303,11 @@ public abstract class StackPanelBase<T> extends JPanel
     return method;
   }
 
+  public final LinkedList<Pair<Method, SampleNode>> getHistory() {
+    return history;
+  }
+
+  @Nullable
   public abstract String getDetail(Point location);
 
   public abstract void filter();

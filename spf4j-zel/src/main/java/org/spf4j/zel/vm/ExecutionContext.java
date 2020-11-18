@@ -31,11 +31,13 @@
  */
 package org.spf4j.zel.vm;
 
+import org.spf4j.ds.SimpleStack;
 import com.google.common.util.concurrent.UncheckedExecutionException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.math.MathContext;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import javax.annotation.Nonnull;
@@ -43,7 +45,7 @@ import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
 import org.spf4j.base.Either;
 import org.spf4j.base.Throwables;
-import org.spf4j.concurrent.FutureBean;
+import org.spf4j.ds.SimpleStackNullSupport;
 import org.spf4j.zel.instr.Instruction;
 import org.spf4j.zel.operators.Operator;
 import static org.spf4j.zel.vm.Program.ExecutionType.SYNC;
@@ -55,6 +57,14 @@ import static org.spf4j.zel.vm.Program.ExecutionType.SYNC;
  */
 @ParametersAreNonnullByDefault
 public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
+
+  public static final Object VOID = new Object() {
+    @Override
+    public String toString() {
+      return "VOID";
+    }
+
+  };
 
   private final Object[] tuple = new Object[2];
 
@@ -80,14 +90,9 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
   private int ip;
 
   /**
-   * The halt register
-   */
-  private boolean terminated;
-
-  /**
    * The main stack
    */
-  private final SimpleStack<Object> stack;
+  private final SimpleStackNullSupport<Object> stack;
 
   /**
    * Standard Input
@@ -104,7 +109,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
     this.mem = localMem;
     this.globalMem = parent.globalMem;
     this.execService = service;
-    this.stack = new SimpleStack<>(8);
+    this.stack = new SimpleStackNullSupport<>(8);
     this.code = program;
     this.resultCache = parent.resultCache;
     this.ip = 0;
@@ -187,7 +192,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
   }
 
   public void terminate() {
-    terminated = true;
+    ip = code.size();
   }
 
   // TODO: Need to employ Either here
@@ -229,7 +234,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
   }
 
   public void suspend(final VMFuture<Object> future) throws SuspendedException {
-    suspendedAt = Arrays.asList(future);
+    suspendedAt = Collections.singletonList(future);
     throw SuspendedException.INSTANCE;
   }
 
@@ -245,8 +250,9 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
     suspendedAt = null;
     Operator.MATH_CONTEXT.set(getMathContext());
     Instruction[] instructions = code.getInstructions();
+    int l = instructions.length;
     try {
-      while (!terminated) {
+      while (ip < l) {
         Instruction icode = instructions[ip];
         ip += icode.execute(ExecutionContext.this);
       }
@@ -255,7 +261,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
         syncStackVals();
         return result;
       } else {
-        return null;
+        return VOID;
       }
     } catch (SuspendedException | InterruptedException e) {
       throw e;
@@ -284,13 +290,29 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
       Either<Object, ? extends ExecutionException> resultStore = resFut.getResultStore();
       if (resultStore != null) {
         this.stack.remove();
-        return FutureBean.processResult(resultStore);
+        return Either.processResult(resultStore);
       } else {
         suspend(resFut);
         throw new IllegalThreadStateException();
       }
     } else {
       this.stack.remove();
+      return result;
+    }
+  }
+
+  public Object peekSyncStackVal() throws SuspendedException, ExecutionException {
+    Object result = this.stack.peek();
+    if (result instanceof VMFuture<?>) {
+      final VMFuture<Object> resFut = (VMFuture<Object>) result;
+      Either<Object, ? extends ExecutionException> resultStore = resFut.getResultStore();
+      if (resultStore != null) {
+        return Either.processResult(resultStore);
+      } else {
+        suspend(resFut);
+        throw new IllegalThreadStateException();
+      }
+    } else {
       return result;
     }
   }
@@ -304,7 +326,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
         suspend(resFut);
         throw new IllegalThreadStateException();
       } else {
-        this.stack.replaceFromTop(0, FutureBean.processResult(resultStore));
+        this.stack.replaceFromTop(0, Either.processResult(resultStore));
       }
     }
   }
@@ -319,7 +341,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
           suspend(resFut);
           throw new IllegalThreadStateException();
         } else {
-          this.stack.replaceFromTop(i, FutureBean.processResult(resultStore));
+          this.stack.replaceFromTop(i, Either.processResult(resultStore));
         }
       }
     }
@@ -368,7 +390,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
         final VMFuture<Object> resFut = (VMFuture<Object>) obj;
         Either<Object, ? extends ExecutionException> resultStore = resFut.getResultStore();
         if (resultStore != null) {
-          final Object processResult = FutureBean.processResult(resultStore);
+          final Object processResult = Either.processResult(resultStore);
           stack.replaceFromTop(i, processResult);
           vals[j] = processResult;
         } else {
@@ -397,11 +419,11 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
             return resultStore.getLeft();
           } else {
             nrErrors++;
-            if (e == null) {
-              e = resultStore.getRight();
-            } else {
-              e = Throwables.chain(resultStore.getRight(), e);
+            ExecutionException exRes = resultStore.getRight();
+            if (e != null) {
+              Throwables.suppressLimited(exRes, e);
             }
+            e = exRes;
           }
         } else {
           if (futures == null) {
@@ -434,6 +456,10 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
 
   public void push(@Nullable final Object obj) {
     this.stack.push(obj);
+  }
+
+  public void pushNull() {
+    this.stack.pushNull();
   }
 
   public void pushAll(final Object[] objects) {
@@ -492,7 +518,7 @@ public final class ExecutionContext implements VMExecutor.Suspendable<Object> {
             + ",\nlocalSymbolTable=" + code.getLocalSymbolTable()
             + ",\nglobalMem=" + Arrays.toString(globalMem)
             + ",\nglobalSymbolTable=" + code.getGlobalSymbolTable()
-            + ",\ncode=" + code + ", ip=" + ip + ", terminated=" + terminated
+            + ",\ncode=" + code + ", ip=" + ip
             + ",\nstack=" + stack + ", io=" + io + '}';
   }
 

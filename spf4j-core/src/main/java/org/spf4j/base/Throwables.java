@@ -38,24 +38,25 @@ import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Predicate;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.spf4j.base.Reflections.PackageInfo;
+import javax.net.ssl.SSLException;
+import org.spf4j.base.avro.AThrowables;
+import org.spf4j.base.avro.RemoteException;
 import org.spf4j.ds.IdentityHashSet;
 
 /**
@@ -64,6 +65,8 @@ import org.spf4j.ds.IdentityHashSet;
  * @author zoly
  */
 @ParametersAreNonnullByDefault
+@SuppressFBWarnings("FCCD_FIND_CLASS_CIRCULAR_DEPENDENCY")
+// Circular dependency with AThrowables, both static utility classes... should be fine...
 public final class Throwables {
 
   /**
@@ -75,32 +78,20 @@ public final class Throwables {
    */
   public static final String CAUSE_CAPTION = "Caused by: ";
 
-  public static final int MAX_THROWABLE_CHAIN
-          = Integer.getInteger("spf4j.throwables.defaultMaxSuppressChain", 100);
 
-  private static final Field CAUSE_FIELD;
+  private static final int MAX_SUPPRESS_CHAIN
+          = Integer.getInteger("spf4j.throwables.defaultMaxSuppressChain", 100);
 
   private static final Field SUPPRESSED_FIELD;
 
   static {
-    CAUSE_FIELD = AccessController.doPrivileged((PrivilegedAction<Field>) () -> {
-      Field causeField;
-      try {
-        causeField = Throwable.class.getDeclaredField("cause");
-      } catch (NoSuchFieldException | SecurityException ex) {
-        throw new ExceptionInInitializerError(ex);
-      }
-      causeField.setAccessible(true);
-      return causeField;
-    });
 
     SUPPRESSED_FIELD = AccessController.doPrivileged((PrivilegedAction<Field>) () -> {
       Field suppressedField;
       try {
         suppressedField = Throwable.class.getDeclaredField("suppressedExceptions");
       } catch (NoSuchFieldException | SecurityException ex) {
-        Lazy.LOG.info("No access to suppressed Exceptions", ex);
-        return null;
+        throw new ExceptionInInitializerError(ex);
       }
       suppressedField.setAccessible(true);
       return suppressedField;
@@ -119,7 +110,10 @@ public final class Throwables {
     @Override
     @SuppressFBWarnings("ITC_INHERITANCE_TYPE_CHECKING")
     public boolean test(final Throwable t) {
-      if (t instanceof Error && !(t instanceof StackOverflowError)) {
+
+      if (t instanceof Error && !(t instanceof StackOverflowError)
+              && !(t instanceof AssertionError)
+              && !(t.getClass().getName().endsWith("TokenMgrError"))) {
         return true;
       }
       if (t instanceof IOException) {
@@ -133,12 +127,67 @@ public final class Throwables {
   };
 
 
+  private static volatile Predicate<Throwable> isRetryablePredicate = new Predicate<Throwable>() {
+
+    /**
+     * A default predicate that will return true if a exception is retry-able...
+     * @param t
+     * @return
+     */
+    @Override
+    @SuppressFBWarnings("ITC_INHERITANCE_TYPE_CHECKING")
+    public boolean test(final Throwable t) {
+      // non recoverables are not retryable.
+      if (Throwables.containsNonRecoverable(t)) {
+        return false;
+      }
+      // Root Cause
+      Throwable rootCause = com.google.common.base.Throwables.getRootCause(t);
+      if (rootCause instanceof SSLException) {
+        return false;
+      }
+      if (rootCause instanceof RuntimeException) {
+        String name = rootCause.getClass().getName();
+        if (name.contains("NonTransient") || !name.contains("Transient")) {
+          return false;
+        }
+      }
+      // check causal chaing
+      Throwable e = Throwables.firstCause(t,
+              (ex) -> {
+                String exClassName = ex.getClass().getName();
+                return (ex instanceof SQLTransientException
+              || ex instanceof SQLRecoverableException
+              || (ex instanceof IOException && !exClassName.contains("Json"))
+              || ex instanceof TimeoutException
+              || (exClassName.contains("Transient")
+                        && !exClassName.contains("NonTransient")));
+                        });
+      return e != null;
+    }
+  };
+
+
   private Throwables() {
   }
 
-  static final class Lazy {
+  /**
+   * figure out if a Exception is retry-able or not.
+   * If while executing a operation a exception is returned, that exception is retryable if retrying the operation
+   * can potentially succeed.
+   * @param value
+   * @return
+   */
+  public static boolean isRetryable(final Throwable value) {
+    return isRetryablePredicate.test(value);
+  }
 
-    private static final Logger LOG = LoggerFactory.getLogger(Throwables.Lazy.class);
+  public static Predicate<Throwable> getIsRetryablePredicate() {
+    return isRetryablePredicate;
+  }
+
+  public static void setIsRetryablePredicate(final Predicate<Throwable> isRetryablePredicate) {
+    Throwables.isRetryablePredicate = isRetryablePredicate;
   }
 
 
@@ -172,6 +221,7 @@ public final class Throwables {
     }
   }
 
+  @Nullable
   public static Throwable removeOldestSuppressedRecursive(final Throwable t) {
     try {
       final List<Throwable> suppressedExceptions = (List<Throwable>) SUPPRESSED_FIELD.get(t);
@@ -190,6 +240,7 @@ public final class Throwables {
     }
   }
 
+  @Nullable
   public static Throwable removeOldestSuppressed(final Throwable t) {
     try {
       final List<Throwable> suppressedExceptions = (List<Throwable>) SUPPRESSED_FIELD.get(t);
@@ -203,89 +254,71 @@ public final class Throwables {
     }
   }
 
-  private static void chain0(final Throwable t, final Throwable cause) {
-    final Throwable rc = com.google.common.base.Throwables.getRootCause(t);
-    setCause(rc, cause);
-  }
 
-  private static void setCause(final Throwable rc, @Nullable final Throwable cause) {
-    try {
-      AccessController.doPrivileged(new PrivilegedAction() {
-        @Override
-        public Object run() {
-          try {
-            CAUSE_FIELD.set(rc, cause);
-          } catch (IllegalArgumentException | IllegalAccessException ex) {
-            throw new RuntimeException(ex);
-          }
-          return null; // nothing to return
-        }
-      });
+  public static final class TrimmedException extends Exception {
 
-    } catch (IllegalArgumentException ex) {
-      throw new RuntimeException(ex);
+    public TrimmedException(final String message) {
+      super(message);
+    }
+
+    @Override
+    public synchronized Throwable fillInStackTrace() {
+      return this;
     }
   }
+
 
   /**
-   * This method will clone the exception t and will set a new root cause.
+   * Functionality will call Throwable.addSuppressed, 2 extra things happen:
    *
-   * @param <T>
-   * @param t
-   * @param newRootCause
-   * @return
-   */
-  public static <T extends Throwable> T chain(final T t, final Throwable newRootCause) {
-    return chain(t, newRootCause, MAX_THROWABLE_CHAIN);
-  }
-
-  public static <T extends Throwable> T chain(final T t, final Throwable newRootCause, final int maxChained) {
-    int chainedExNr = com.google.common.base.Throwables.getCausalChain(t).size();
-    if (chainedExNr >= maxChained) {
-      Lazy.LOG.warn("Trimming exception", newRootCause);
-      return t;
-    }
-    List<Throwable> newRootCauseChain = com.google.common.base.Throwables.getCausalChain(newRootCause);
-    int newChainIdx = 0;
-    final int size = newRootCauseChain.size();
-    if (chainedExNr + size > maxChained) {
-      newChainIdx = size - (maxChained - chainedExNr);
-      Lazy.LOG.warn("Trimming exception at {} ", newChainIdx, newRootCause);
-    }
-    T result;
-    try {
-      result = Objects.clone(t);
-    } catch (RuntimeException ex) {
-      result = t;
-      Lazy.LOG.info("Unable to clone exception {}", t, ex);
-    }
-    chain0(result, newRootCauseChain.get(newChainIdx));
-    return result;
-
-  }
-
-  public static void trimCausalChain(final Throwable t, final int maxSize) {
-    List<Throwable> causalChain = com.google.common.base.Throwables.getCausalChain(t);
-    if (causalChain.size() <= maxSize) {
-      return;
-    }
-    setCause(causalChain.get(maxSize - 1), null);
-  }
-
-  /**
-   * Functionality similar for java 1.7 Throwable.addSuppressed. 2 extra things happen:
-   *
-   * 1) limit to nr of exceptions suppressed. 2) Suppression does not mutate Exception, it clones it.
+   * 1) limit to nr of exceptions suppressed.
+   * 2) if exception is already suppressed, will not add it.
+   * 3) will return a clone of exception t.
    *
    * @param <T>
    * @param t
    * @param suppressed
-   * @return
+   * @returna clone of exception t with suppressed exception suppressed;
+   * @deprecated use suppressLimited instead.
+   *
    */
   @CheckReturnValue
+  @Deprecated
   public static <T extends Throwable> T suppress(@Nonnull final T t, @Nonnull final Throwable suppressed) {
-    return suppress(t, suppressed, MAX_THROWABLE_CHAIN);
+    return suppress(t, suppressed, MAX_SUPPRESS_CHAIN);
   }
+
+  /**
+   * Functionality will call Throwable.addSuppressed, 2 extra things happen:
+   *
+   * 1) limit to nr of exceptions suppressed.
+   * 2) if exception is already suppressed, will not add it.
+   *
+   * @param t
+   * @param suppressed
+   */
+  public static void suppressLimited(@Nonnull final Throwable t, @Nonnull final Throwable suppressed) {
+    suppressLimited(t, suppressed, MAX_SUPPRESS_CHAIN);
+  }
+
+  @SuppressFBWarnings("NOS_NON_OWNED_SYNCHRONIZATION")
+  public static void suppressLimited(@Nonnull final Throwable t, @Nonnull final Throwable suppressed,
+          final int maxSuppressed) {
+    if (contains(t, suppressed)) { //protect against circular references.
+      Logger.getLogger(Throwables.class.getName()).log(Level.INFO,
+              "Circular suppression attempted", new RuntimeException(suppressed));
+      return;
+    }
+    synchronized (t) {
+      t.addSuppressed(suppressed);
+      while (getNrRecursiveSuppressedExceptions(t) > maxSuppressed) {
+        if (removeOldestSuppressedRecursive(t) == null) {
+          throw new IllegalArgumentException("Impossible state for " + t);
+        }
+      }
+    }
+  }
+
 
   @CheckReturnValue
   public static <T extends Throwable> T suppress(@Nonnull final T t, @Nonnull final Throwable suppressed,
@@ -296,7 +329,9 @@ public final class Throwables {
     } catch (RuntimeException ex) {
       t.addSuppressed(ex);
       clone = t;
-      Lazy.LOG.debug("Unable to clone exception, will mutate instead", t);
+    }
+    if (contains(t, suppressed)) {
+      return clone;
     }
     clone.addSuppressed(suppressed);
     while (getNrRecursiveSuppressedExceptions(clone) > maxSuppressed) {
@@ -310,7 +345,8 @@ public final class Throwables {
   /**
    * Utility to get suppressed exceptions.
    *
-   * In java 1.7 it will return t.getSuppressed() + in case it is Iterable<Throwable> any other linked exceptions (see
+   * In java 1.7 it will return t.getSuppressed()
+   * + in case it is Iterable<Throwable> any other linked exceptions (see
    * SQLException)
    *
    * java 1.6 behavior is deprecated.
@@ -322,7 +358,7 @@ public final class Throwables {
     if (t instanceof Iterable) {
       // see SQLException
       List<Throwable> suppressed = new ArrayList<>(java.util.Arrays.asList(t.getSuppressed()));
-      Set<Throwable> ignore = new HashSet<>();
+      Set<Throwable> ignore = new IdentityHashSet<>();
       ignore.addAll(com.google.common.base.Throwables.getCausalChain(t));
       Iterator it = ((Iterable) t).iterator();
       while (it.hasNext()) {
@@ -336,6 +372,12 @@ public final class Throwables {
         } else {
           break;
         }
+      }
+      for (Throwable st : t.getSuppressed()) {
+        if (ignore.contains((Throwable) st)) {
+          continue;
+        }
+        suppressed.add(st);
       }
       return suppressed.toArray(new Throwable[suppressed.size()]);
     } else {
@@ -370,13 +412,13 @@ public final class Throwables {
     final int lineNumber = element.getLineNumber();
     if (element.isNativeMethod()) {
       to.append("(Native Method)");
-    } else if (fileName != null && lineNumber >= 0) {
+    } else if (fileName == null) {
+      to.append("(Unknown Source)");
+    } else if (lineNumber >= 0) {
       to.append('(').append(fileName).append(':')
               .append(Integer.toString(lineNumber)).append(')');
-    } else if (fileName != null) {
-      to.append('(').append(fileName).append(')');
     } else {
-      to.append("(Unknown Source)");
+      to.append('(').append(fileName).append(')');
     }
     if (detail == PackageDetail.NONE) {
       return;
@@ -385,16 +427,16 @@ public final class Throwables {
       to.append("[^]");
       return;
     }
-    PackageInfo pInfo = Reflections.getPackageInfo(currClassName);
-    if (abbreviatedTraceElement && prevClassName != null && pInfo.equals(Reflections.getPackageInfo(prevClassName))) {
+    org.spf4j.base.avro.PackageInfo pInfo = PackageInfo.getPackageInfo(currClassName);
+    if (abbreviatedTraceElement && prevClassName != null && pInfo.equals(PackageInfo.getPackageInfo(prevClassName))) {
       to.append("[^]");
       return;
     }
-    if (pInfo.hasInfo()) {
+    if (!pInfo.getUrl().isEmpty() || !pInfo.getVersion().isEmpty()) {
       String jarSourceUrl = pInfo.getUrl();
       String version = pInfo.getVersion();
       to.append('[');
-      if (jarSourceUrl != null) {
+      if (!jarSourceUrl.isEmpty()) {
         if (detail == PackageDetail.SHORT) {
           String url = jarSourceUrl;
           int lastIndexOf = url.lastIndexOf('/');
@@ -419,7 +461,7 @@ public final class Throwables {
       } else {
         to.append("na");
       }
-      if (version != null) {
+      if (!version.isEmpty()) {
         to.append(':');
         to.append(version);
       }
@@ -479,14 +521,13 @@ public final class Throwables {
     writeTo(t, to, detail, DEFAULT_TRACE_ELEMENT_ABBREVIATION);
   }
 
-  @SuppressFBWarnings({"OCP_OVERLY_CONCRETE_PARAMETER", "NOS_NON_OWNED_SYNCHRONIZATION"})
-  // I don't want this to throw a checked ex though... + I really want the coarse sync!
+  @SuppressFBWarnings({"OCP_OVERLY_CONCRETE_PARAMETER"}) // on purpose :-)
   public static void writeTo(@Nonnull final Throwable t, @Nonnull final PrintStream to,
           @Nonnull final PackageDetail detail, final boolean abbreviatedTraceElement) {
+    StringBuilder sb = new StringBuilder(1024);
     try {
-      synchronized (to) {
-        writeTo(t, (Appendable) to, detail, abbreviatedTraceElement);
-      }
+      writeTo(t, sb, detail, abbreviatedTraceElement);
+      to.append(sb);
     } catch (IOException ex) {
       throw new RuntimeException(ex);
     }
@@ -497,29 +538,47 @@ public final class Throwables {
   }
 
   public static void writeTo(final Throwable t, final Appendable to, final PackageDetail detail,
+          final String prefix) throws IOException {
+    writeTo(t, to, detail, DEFAULT_TRACE_ELEMENT_ABBREVIATION, prefix);
+  }
+
+  public static void writeTo(final Throwable t, final Appendable to, final PackageDetail detail,
           final boolean abbreviatedTraceElement) throws IOException {
+    writeTo(t, to, detail, abbreviatedTraceElement, "");
+  }
 
-    Set<Throwable> dejaVu = Collections.newSetFromMap(new IdentityHashMap<Throwable, Boolean>());
-    dejaVu.add(t);
-
+  public static void writeTo(final Throwable t, final Appendable to, final PackageDetail detail,
+          final boolean abbreviatedTraceElement, final String prefix) throws IOException {
+    if (t instanceof RemoteException) {
+      AThrowables.writeTo((RemoteException) t, to, detail, abbreviatedTraceElement, prefix);
+      return;
+    }
+    to.append(prefix);
     writeMessageString(to, t);
     to.append('\n');
+    writeThrowableDetail(t, to, detail, abbreviatedTraceElement, prefix);
+  }
+
+  public static void writeThrowableDetail(final Throwable t, final Appendable to, final PackageDetail detail,
+          final boolean abbreviatedTraceElement, final String prefix) throws IOException {
     StackTraceElement[] trace = t.getStackTrace();
-
-    writeTo(trace, to, detail, abbreviatedTraceElement);
-
-    // Print suppressed exceptions, if any
-    for (Throwable se : getSuppressed(t)) {
-      printEnclosedStackTrace(se, to, trace, SUPPRESSED_CAPTION, "\t", dejaVu, detail, abbreviatedTraceElement);
-    }
-
+    writeTo(trace, to, detail, abbreviatedTraceElement, prefix);
+    Throwable[] suppressed = getSuppressed(t);
     Throwable ourCause = t.getCause();
-
+    if (ourCause == null && suppressed.length == 0) {
+      return;
+    }
+    Set<Throwable> dejaVu = new IdentityHashSet<Throwable>();
+    dejaVu.add(t);
+    // Print suppressed exceptions, if any
+    for (Throwable se : suppressed) {
+      printEnclosedStackTrace(se, to, trace, SUPPRESSED_CAPTION, prefix + "\t",
+              dejaVu, detail, abbreviatedTraceElement);
+    }
     // Print cause, if any
     if (ourCause != null) {
-      printEnclosedStackTrace(ourCause, to, trace, CAUSE_CAPTION, "", dejaVu, detail, abbreviatedTraceElement);
+      printEnclosedStackTrace(ourCause, to, trace, CAUSE_CAPTION, prefix, dejaVu, detail, abbreviatedTraceElement);
     }
-
   }
 
   public static void writeMessageString(final Appendable to, final Throwable t) throws IOException {
@@ -533,9 +592,15 @@ public final class Throwables {
   public static void writeTo(final StackTraceElement[] trace, final Appendable to, final PackageDetail detail,
           final boolean abbreviatedTraceElement)
           throws IOException {
+    writeTo(trace, to, detail, abbreviatedTraceElement, "");
+  }
 
+  public static void writeTo(final StackTraceElement[] trace, final Appendable to, final PackageDetail detail,
+          final boolean abbreviatedTraceElement, final String prefix)
+          throws IOException {
     StackTraceElement prevElem = null;
     for (StackTraceElement traceElement : trace) {
+      to.append(prefix);
       to.append("\tat ");
       writeTo(traceElement, prevElem, to, detail, abbreviatedTraceElement);
       to.append('\n');
@@ -544,13 +609,14 @@ public final class Throwables {
   }
 
   public static int commonFrames(final StackTraceElement[] trace, final StackTraceElement[] enclosingTrace) {
-    int m = trace.length - 1;
+    int from = trace.length - 1;
+    int m = from;
     int n = enclosingTrace.length - 1;
     while (m >= 0 && n >= 0 && trace[m].equals(enclosingTrace[n])) {
       m--;
       n--;
     }
-    return trace.length - 1 - m;
+    return from - m;
   }
 
   private static void printEnclosedStackTrace(final Throwable t, final Appendable s,
@@ -563,7 +629,7 @@ public final class Throwables {
     if (dejaVu.contains(t)) {
       s.append("\t[CIRCULAR REFERENCE:");
       writeMessageString(s, t);
-      s.append(']');
+      s.append("]\n");
     } else {
       dejaVu.add(t);
       // Compute number of frames in common between this and enclosing trace
@@ -602,10 +668,20 @@ public final class Throwables {
     }
   }
 
+  /**
+   * Is this Throwable a JVM non-recoverable exception. (Oom, VMError, etc...)
+   * @param t
+   * @return
+   */
   public static boolean isNonRecoverable(@Nonnull final Throwable t) {
     return nonRecoverableClassificationPredicate.test(t);
   }
 
+  /**
+   * Does this Throwable contain a JVM non-recoverable exception. (Oom, VMError, etc...)
+   * @param t
+   * @return
+   */
   public static boolean containsNonRecoverable(@Nonnull final Throwable t) {
     return contains(t, nonRecoverableClassificationPredicate);
   }
@@ -623,6 +699,17 @@ public final class Throwables {
 
 
   /**
+   * checks in the throwable + children (both causal and suppressed) contain a throwable that
+   * respects the Predicate.
+   * @param t the throwable
+   * @param predicate the predicate
+   * @return true if a Throwable matching the predicate is found.
+   */
+  public static boolean contains(@Nonnull final Throwable t, @Nonnull final Throwable toLookFor) {
+    return first(t, (x) -> x == toLookFor) != null;
+  }
+
+  /**
    * return first Exception in the causal chain Assignable to clasz.
    * @param <T>
    * @param t
@@ -636,7 +723,8 @@ public final class Throwables {
   }
 
   /**
-   * Returns the first Throwable that matches the predicate in the causal and suppressed chain.
+   * Returns the first Throwable that matches the predicate in the causal and suppressed chain,
+   * the suppressed chain includes the supression mechanism included in SQLException.
    * @param t the Throwable
    * @param predicate the Predicate
    * @return the Throwable the first matches the predicate or null is none matches.
@@ -644,8 +732,17 @@ public final class Throwables {
   @Nullable
   @CheckReturnValue
   public static Throwable first(@Nonnull final Throwable t, final Predicate<Throwable> predicate) {
+    if (predicate.test(t)) { //shortcut
+      return t;
+    }
     ArrayDeque<Throwable> toScan =  new ArrayDeque<>();
-    toScan.addFirst(t);
+    Throwable cause = t.getCause();
+    if (cause != null) {
+      toScan.addFirst(cause);
+    }
+    for (Throwable supp : getSuppressed(t)) {
+      toScan.addLast(supp);
+    }
     Throwable th;
     THashSet<Throwable> seen = new IdentityHashSet<>();
     while ((th = toScan.pollFirst()) != null) {
@@ -655,11 +752,11 @@ public final class Throwables {
       if (predicate.test(th)) {
         return th;
       } else {
-        Throwable cause = th.getCause();
+        cause = th.getCause();
         if (cause != null) {
           toScan.addFirst(cause);
         }
-        for (Throwable supp : th.getSuppressed()) {
+        for (Throwable supp : getSuppressed(th)) {
           toScan.addLast(supp);
         }
       }
@@ -694,6 +791,10 @@ public final class Throwables {
     return nonRecoverableClassificationPredicate;
   }
 
+  /**
+   * Overwrite the default non-recoverable predicate.
+   * @param predicate
+   */
   public static void setNonRecoverablePredicate(final Predicate<Throwable> predicate) {
     Throwables.nonRecoverableClassificationPredicate = predicate;
   }

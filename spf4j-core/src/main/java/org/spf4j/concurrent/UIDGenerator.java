@@ -35,12 +35,16 @@ import com.google.common.io.BaseEncoding;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.net.NetworkInterface;
 import java.net.SocketException;
+import java.nio.ByteBuffer;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.util.Enumeration;
 import java.util.function.Supplier;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.spf4j.base.Strings;
+import org.spf4j.base.AppendableUtils;
+import org.spf4j.os.ProcessUtil;
 
 /**
  * Unique ID Generator Based on the assumptions: 1. host MAC address is used. (each network interface has a Unique ID)
@@ -51,8 +55,6 @@ import org.spf4j.base.Strings;
  */
 @ParametersAreNonnullByDefault
 public final class UIDGenerator implements Supplier<CharSequence> {
-
-  private static final Logger LOG = LoggerFactory.getLogger(UIDGenerator.class);
 
   private final Sequence sequence;
 
@@ -102,6 +104,7 @@ public final class UIDGenerator implements Supplier<CharSequence> {
     return generateIdBase(prefix, BaseEncoding.base64Url(), separator, customEpoch);
   }
 
+  @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
   public static StringBuilder generateIdBase(final String prefix,
           final BaseEncoding baseEncoding, final char separator,
           final long customEpoch) {
@@ -116,22 +119,38 @@ public final class UIDGenerator implements Supplier<CharSequence> {
           intfMac = networkInterfaces.nextElement().getHardwareAddress();
         } while ((intfMac == null || intfMac.length == 0) && networkInterfaces.hasMoreElements());
         if (intfMac == null) {
-          LOG.info("Unable to get interface MAC address for ID generation");
-          intfMac = new byte[]{0};
+          Logger.getLogger(UIDGenerator.class.getName()).warning(
+                  "Unable to get interface MAC address for ID generation");
+          try {
+            intfMac = ByteBuffer.allocate(Long.BYTES).putLong(SecureRandom.getInstanceStrong().nextLong()).array();
+          } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException(ex);
+          }
         }
       } else {
-        LOG.info("Unable to get interface MAC address for ID generation");
-        intfMac = new byte[]{0};
+        Logger.getLogger(UIDGenerator.class.getName()).warning(
+                "Unable to get interface MAC address for ID generation");
+        try {
+          intfMac = ByteBuffer.allocate(Long.BYTES).putLong(SecureRandom.getInstanceStrong().nextLong()).array();
+        } catch (NoSuchAlgorithmException ex) {
+          throw new IllegalStateException(ex);
+        }
       }
     } catch (SocketException ex) {
-      LOG.info("Unable to get interface MAC address for ID generation", ex);
-      intfMac = new byte[]{0};
+      Logger.getLogger(UIDGenerator.class.getName()).log(Level.WARNING,
+              "Unable to get interface MAC address for ID generation", ex);
+      try {
+        intfMac = ByteBuffer.allocate(Long.BYTES).putLong(SecureRandom.getInstanceStrong().nextLong()).array();
+      } catch (NoSuchAlgorithmException ex2) {
+        ex2.addSuppressed(ex);
+        throw new IllegalStateException(ex2);
+      }
     }
     sb.append(baseEncoding.encode(intfMac)).append(separator);
 
-    Strings.appendUnsignedString(sb, org.spf4j.base.Runtime.PID, 5);
+    AppendableUtils.appendUnsignedString(sb, ProcessUtil.getPid(), 5);
     sb.append(separator);
-    Strings.appendUnsignedString(sb, (System.currentTimeMillis() - customEpoch) / 1000, 5);
+    AppendableUtils.appendUnsignedString(sb, (System.currentTimeMillis() - customEpoch) / 1000, 5);
     sb.append(separator);
     return sb;
   }
@@ -143,7 +162,7 @@ public final class UIDGenerator implements Supplier<CharSequence> {
   public CharSequence next() {
     StringBuilder result = new StringBuilder(maxSize);
     result.append(base);
-    Strings.appendUnsignedString(result, sequence.next(), 5);
+    AppendableUtils.appendUnsignedString(result, sequence.next(), 5);
     return result;
   }
 

@@ -36,20 +36,24 @@ import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.nio.charset.Charset;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.annotation.Nullable;
 import org.spf4j.base.AbstractRunnable;
+import org.spf4j.base.Threads;
 import org.spf4j.concurrent.DefaultScheduler;
 import org.spf4j.io.ByteArrayBuilder;
 import org.spf4j.jmx.JmxExport;
 import org.spf4j.jmx.Registry;
 import org.spf4j.perf.MeasurementRecorder;
 import org.spf4j.perf.impl.RecorderFactory;
-import org.spf4j.stackmonitor.FastStackCollector;
 
 /**
  *
@@ -64,39 +68,70 @@ public final class ThreadUsageSampler {
   private static final List<String> PEAK_THREAD_NAMES = new ArrayList<>();
   private static final List<StackTraceElement[]> PEAK_THREAD_TRACES = new ArrayList<>();
   private static final BitSet PEAK_THREAD_DAEMON = new BitSet();
+  private static Instant peakTime;
 
   static {
     org.spf4j.base.Runtime.queueHook(2, new AbstractRunnable(true) {
       @Override
       public void doRun() {
         stop();
-        writePeakThreadInfo(System.err);
+        String pto = System.getProperty("spf4j.threadUsageSampler.peakThreadsOnShutdown", "out");
+        switch (pto) {
+          case "out":
+          case "info":
+            logPeakThreadInfo(Level.INFO);
+            break;
+          case "err":
+          case "warn":
+            logPeakThreadInfo(Level.WARNING);
+            break;
+          case "none":
+            break;
+          default:
+            throw new IllegalArgumentException("Invalid settig for spf4j.threadUsageSampler.peakThreadsOnShutdown: "
+                    + pto);
+        }
       }
 
     });
     Registry.export(ThreadUsageSampler.class);
   }
-  
+
   private ThreadUsageSampler() {
   }
 
-  public static void writePeakThreadInfo(final PrintStream out) {
-    out.println("Peak Threads:");
-    int i = 0;
-    boolean haveStacktraces = PEAK_THREAD_TRACES.size() > 0;
-    for (String tname : PEAK_THREAD_NAMES) {
-      out.print(tname);
-      out.print(", daemon =");
-      out.print(PEAK_THREAD_DAEMON.get(i));
-      out.print(',');
-      if (haveStacktraces) {
-        out.print(' ');
-        out.print(Arrays.toString(PEAK_THREAD_TRACES.get(i)));
+  public static synchronized void writePeakThreadInfo(final PrintStream out) {
+    if (!PEAK_THREAD_NAMES.isEmpty()) {
+      out.println("Peak Threads:");
+      int i = 0;
+      boolean haveStacktraces = !PEAK_THREAD_TRACES.isEmpty();
+      for (String tname : PEAK_THREAD_NAMES) {
+        out.print(tname);
+        out.print(", daemon =");
+        out.print(PEAK_THREAD_DAEMON.get(i));
+        out.print(',');
+        if (haveStacktraces) {
+          out.print(' ');
+          out.print(Arrays.toString(PEAK_THREAD_TRACES.get(i)));
+        }
+        out.println();
+        i++;
       }
-      out.println();
-      i++;
     }
   }
+
+  public static synchronized void logPeakThreadInfo(final Level level) {
+    if (!PEAK_THREAD_NAMES.isEmpty()) {
+      Logger logger = Logger.getLogger(ThreadUsageSampler.class.getName());
+      int i = 0;
+      for (String tname : PEAK_THREAD_NAMES) {
+        logger.log(level, "PeakThread({0}), daemon={1}, trace -> {2}",
+                new Object[] {tname, PEAK_THREAD_DAEMON.get(i), Arrays.toString(PEAK_THREAD_TRACES.get(i))});
+        i++;
+      }
+    }
+  }
+
 
   @JmxExport
   @SuppressFBWarnings({"DM_DEFAULT_ENCODING", "NP_LOAD_OF_KNOWN_NULL_VALUE"})
@@ -109,10 +144,28 @@ public final class ThreadUsageSampler {
   }
 
   @JmxExport
+  public static synchronized void clearPeakThreadInfo() {
+    PEAK_THREAD_NAMES.clear();
+    PEAK_THREAD_TRACES.clear();
+    PEAK_THREAD_DAEMON.clear();
+    peakTime = null;
+  }
+
+  @JmxExport
+  @Nullable
+  public static synchronized String getPeakTime() {
+    if (peakTime == null) {
+      return null;
+    } else {
+      return peakTime.toString();
+    }
+  }
+
+  @JmxExport
   public static String getCurrentAliveThreadInfo() {
     StringBuilder sb = new StringBuilder(2048);
-    Thread[] threads = FastStackCollector.getThreads();
-    StackTraceElement[][] stackTraces = FastStackCollector.getStackTraces(threads);
+    Thread[] threads = Threads.getThreads();
+    StackTraceElement[][] stackTraces = Threads.getStackTraces(threads);
     for (int i = 0; i < threads.length; i++) {
       Thread t = threads[i];
       if (t.isAlive()) {
@@ -141,42 +194,8 @@ public final class ThreadUsageSampler {
   public static synchronized void start(@JmxExport("sampleTimeMillis") final int sampleTime,
           @JmxExport("withStackTraces") final boolean withStackTraces) {
     if (samplingFuture == null) {
-      final MeasurementRecorder cpuUsage
-              = RecorderFactory.createDirectRecorder("peak-thread-count", "count", sampleTime);
-      samplingFuture = DefaultScheduler.INSTANCE.scheduleWithFixedDelay(new AbstractRunnable() {
-
-        private int maxThreadsNr = 0;
-
-        @Override
-        public void doRun() {
-          final int peakThreadCount = TH_BEAN.getPeakThreadCount();
-          cpuUsage.record(peakThreadCount);
-          if (peakThreadCount > maxThreadsNr) {
-            Thread[] ths = FastStackCollector.getThreads();
-            if (ths.length > PEAK_THREAD_NAMES.size()) {
-              if (withStackTraces) {
-                StackTraceElement[][] stackTraces = FastStackCollector.getStackTraces(ths);
-                PEAK_THREAD_TRACES.clear();
-                PEAK_THREAD_TRACES.addAll(Arrays.asList(stackTraces));
-              }
-
-              PEAK_THREAD_NAMES.clear();
-              int i = 0;
-              for (Thread th : ths) {
-                PEAK_THREAD_NAMES.add(th.getName());
-                if (th.isDaemon()) {
-                  PEAK_THREAD_DAEMON.set(i);
-                } else {
-                  PEAK_THREAD_DAEMON.clear(i);
-                }
-                i++;
-              }
-            }
-            maxThreadsNr = peakThreadCount;
-          }
-          TH_BEAN.resetPeakThreadCount();
-        }
-      }, sampleTime, sampleTime, TimeUnit.MILLISECONDS);
+      samplingFuture = DefaultScheduler.INSTANCE.scheduleWithFixedDelay(
+              new ThreadStateRecorder(sampleTime, withStackTraces), sampleTime, sampleTime, TimeUnit.MILLISECONDS);
     } else {
       throw new IllegalStateException("Thread sampling already started " + samplingFuture);
     }
@@ -193,6 +212,52 @@ public final class ThreadUsageSampler {
   @JmxExport
   public static synchronized boolean isStarted() {
     return samplingFuture != null;
+  }
+
+  private static final class ThreadStateRecorder extends AbstractRunnable {
+
+    private final MeasurementRecorder threadCounter;
+    private final boolean withStackTraces;
+
+    ThreadStateRecorder(final int sampleTime, final boolean withStackTraces) {
+      this.threadCounter
+              = RecorderFactory.createDirectRecorder("process.peak_thread_count", "count", sampleTime);
+      this.withStackTraces = withStackTraces;
+    }
+    private int maxThreadsNr = 0;
+
+    @Override
+    public void doRun() {
+      final int peakThreadCount = TH_BEAN.getPeakThreadCount();
+      threadCounter.record(peakThreadCount);
+      if (TH_BEAN.getThreadCount() > maxThreadsNr) {
+        synchronized (ThreadUsageSampler.class) {
+          Thread[] ths = Threads.getThreads();
+          peakTime = Instant.now();
+          if (ths.length > PEAK_THREAD_NAMES.size()) {
+            if (withStackTraces) {
+              StackTraceElement[][] stackTraces = Threads.getStackTraces(ths);
+              PEAK_THREAD_TRACES.clear();
+              PEAK_THREAD_TRACES.addAll(Arrays.asList(stackTraces));
+            }
+
+            PEAK_THREAD_NAMES.clear();
+            int i = 0;
+            for (Thread th : ths) {
+              PEAK_THREAD_NAMES.add(th.getName());
+              if (th.isDaemon()) {
+                PEAK_THREAD_DAEMON.set(i);
+              } else {
+                PEAK_THREAD_DAEMON.clear(i);
+              }
+              i++;
+            }
+          }
+          maxThreadsNr = peakThreadCount;
+        }
+      }
+      TH_BEAN.resetPeakThreadCount();
+    }
   }
 
 }

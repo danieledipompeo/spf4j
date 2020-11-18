@@ -31,18 +31,19 @@
  */
 package org.spf4j.recyclable.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.spf4j.recyclable.ObjectCreationException;
 import org.spf4j.recyclable.ObjectDisposeException;
 import org.spf4j.recyclable.RecyclingSupplier;
 import org.spf4j.recyclable.Scanable;
-import java.util.concurrent.TimeoutException;
+import javax.annotation.Nonnull;
 
 /**
  *
  * @author zoly
  */
 // a pool instance is tipically alive for the entire life of the process
-@edu.umd.cs.findbugs.annotations.SuppressFBWarnings("PMB_INSTANCE_BASED_THREAD_LOCAL")
+@SuppressFBWarnings("PMB_INSTANCE_BASED_THREAD_LOCAL")
 final class ScalableObjectPool<T> implements RecyclingSupplier<T>,  Scanable<ObjectHolder<T>> {
 
     private final SimpleSmartObjectPool<ObjectHolder<T>> globalPool;
@@ -50,7 +51,8 @@ final class ScalableObjectPool<T> implements RecyclingSupplier<T>,  Scanable<Obj
     private final ThreadLocal<LocalObjectPool<T>> localPool;
 
 
-    ScalableObjectPool(final int initialSize, final int maxSize, final RecyclingSupplier.Factory<T> factory,
+    ScalableObjectPool(final int initialSize, final int maxSize,
+            @Nonnull final RecyclingSupplier.Factory<T> factory,
             final boolean fair) throws ObjectCreationException {
         globalPool = new SimpleSmartObjectPool<>(initialSize, maxSize,
                 new ObjectHolderFactory<>(initialSize, factory), fair);
@@ -65,8 +67,11 @@ final class ScalableObjectPool<T> implements RecyclingSupplier<T>,  Scanable<Obj
 
 
     @Override
-    public T get() throws ObjectCreationException, InterruptedException, TimeoutException {
-        return localPool.get().get();
+    @Nonnull
+    @SuppressFBWarnings("AI_ANNOTATION_ISSUES_NEEDS_NULLABLE")
+    public T tryGet(final long deadlineNanos) throws ObjectCreationException,
+            InterruptedException {
+        return localPool.get().tryGet(deadlineNanos);
     }
 
     @Override

@@ -35,11 +35,14 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.Point;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import javax.annotation.Nullable;
 import org.spf4j.base.EqualsPredicate;
-import org.spf4j.base.Method;
+import org.spf4j.base.Methods;
 import org.spf4j.base.Pair;
+import org.spf4j.base.avro.Method;
 import org.spf4j.stackmonitor.SampleNode;
 
 /**
@@ -51,8 +54,9 @@ public final class FlameStackPanel extends StackPanelBase<Pair<Method, SampleNod
 
   private static final long serialVersionUID = 1L;
 
-  public FlameStackPanel(final SampleNode samples) {
-    super(samples);
+  public FlameStackPanel(final Method method,
+          final SampleNode samples, final LinkedList<Pair<Method, SampleNode>> history) {
+    super(method, samples, history);
   }
 
   @Override
@@ -64,26 +68,28 @@ public final class FlameStackPanel extends StackPanelBase<Pair<Method, SampleNod
   @SuppressFBWarnings("ISB_TOSTRING_APPENDING")
   private int paintNode(final Method method, final SampleNode node,
           final Graphics2D g2, final int x, final int py, final int width, final int height, final int depth) {
+    if (node == null) {
+      return 0;
+    }
     int y = py;
     int sampleCount = node.getSampleCount();
-    String val = method.toString() + '-' + sampleCount;
+    String val = Methods.toString(method) + '-' + sampleCount;
     setElementColor(depth, g2);
     g2.setClip(x, y, width, height);
     g2.fillRect(x, y, width, height);
-    insert(x, y, width, height, new Sampled<>(Pair.of(method, node), sampleCount));
+    insert(x, y, width, height, Pair.of(method, node));
     g2.setPaint(Color.BLACK);
     g2.drawString(val, x, y + height - 1);
     g2.setClip(null);
     g2.setPaint(LINK_COLOR);
     g2.drawRect(x, y, width, height);
-    Map<Method, SampleNode> children = node.getSubNodes();
     int result = height;
-    if (children != null) {
+    if (!node.isEmpty()) {
       y += height;
       int relX = x;
       double scale = (double) width / sampleCount;
       int maxY = 0;
-      for (Map.Entry<Method, SampleNode> entry : children.entrySet()) {
+      for (Map.Entry<Method, SampleNode> entry : node.entrySet()) {
         SampleNode cnode = entry.getValue();
         // sampleCount -> width
         // childSampleCount -> childWidth
@@ -100,11 +106,12 @@ public final class FlameStackPanel extends StackPanelBase<Pair<Method, SampleNod
 
   @Override
   @SuppressFBWarnings("ISB_TOSTRING_APPENDING")
+  @Nullable
   public String getDetail(final Point location) {
-    List<Sampled<Pair<Method, SampleNode>>> tips = search(location.x, location.y, 0, 0);
+    List<Pair<Method, SampleNode>> tips = search(location.x, location.y, 0, 0);
     if (tips.size() >= 1) {
-      final Sampled<Pair<Method, SampleNode>> m = tips.get(0);
-      return m.getObj().toString() + '-' + m.getNrSamples();
+      final Pair<Method, SampleNode> m = tips.get(0);
+      return Methods.toString(m.getFirst()) + '-' + m.getSecond().getSampleCount();
     } else {
       return null;
     }
@@ -112,9 +119,9 @@ public final class FlameStackPanel extends StackPanelBase<Pair<Method, SampleNod
 
   @Override
   public void filter() {
-    List<Sampled<Pair<Method, SampleNode>>> tips = search(xx, yy, 0, 0);
+    List<Pair<Method, SampleNode>> tips = search(xx, yy, 0, 0);
     if (tips.size() >= 1) {
-      final Method value = tips.get(0).getObj().getFirst();
+      final Method value = tips.get(0).getFirst();
       updateSamples(getMethod(), getSamples().filteredBy(new EqualsPredicate<Method>(value)));
       repaint();
     }
@@ -122,9 +129,9 @@ public final class FlameStackPanel extends StackPanelBase<Pair<Method, SampleNod
 
   @Override
   public void drill() {
-    List<Sampled<Pair<Method, SampleNode>>> tips = search(xx, yy, 0, 0);
+    List<Pair<Method, SampleNode>> tips = search(xx, yy, 0, 0);
     if (tips.size() >= 1) {
-      Pair<Method, SampleNode> sample = tips.get(0).getObj();
+      Pair<Method, SampleNode> sample = tips.get(0);
       updateSamples(sample.getFirst(), sample.getSecond());
       repaint();
     }

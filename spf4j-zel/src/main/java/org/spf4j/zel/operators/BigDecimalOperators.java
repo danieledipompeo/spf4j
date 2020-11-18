@@ -68,7 +68,7 @@ public final class BigDecimalOperators {
 
                 @Override
                 public Number op(final BigDecimal a, final Number b) {
-                    return a.add(new BigDecimal(b.doubleValue()), MATH_CONTEXT.get());
+                    return a.add(BigDecimal.valueOf(b.doubleValue()), MATH_CONTEXT.get());
                 }
             };
             operations.put(Double.class, dfOp);
@@ -117,7 +117,7 @@ public final class BigDecimalOperators {
 
                 @Override
                 public Number op(final BigDecimal a, final Number b) {
-                    return a.subtract(new BigDecimal(b.doubleValue()), MATH_CONTEXT.get());
+                    return a.subtract(BigDecimal.valueOf(b.doubleValue()), MATH_CONTEXT.get());
                 }
             };
             operations.put(Double.class, dfOp);
@@ -165,7 +165,7 @@ public final class BigDecimalOperators {
 
                 @Override
                 public Number op(final BigDecimal a, final Number b) {
-                    return a.multiply(new BigDecimal(b.doubleValue()), MATH_CONTEXT.get());
+                    return a.multiply(BigDecimal.valueOf(b.doubleValue()), MATH_CONTEXT.get());
                 }
             };
             operations.put(Double.class, dfOp);
@@ -214,7 +214,7 @@ public final class BigDecimalOperators {
 
                 @Override
                 public Number op(final BigDecimal a, final Number b) {
-                    return a.divide(new BigDecimal(b.doubleValue()), MATH_CONTEXT.get());
+                    return a.divide(BigDecimal.valueOf(b.doubleValue()), MATH_CONTEXT.get());
                 }
             };
             operations.put(Double.class, dfOp);
@@ -262,7 +262,7 @@ public final class BigDecimalOperators {
 
                 @Override
                 public Number op(final BigDecimal a, final Number b) {
-                    return a.toBigInteger().mod(new BigDecimal(b.doubleValue()).toBigInteger());
+                    return a.toBigInteger().mod(BigDecimal.valueOf(b.doubleValue()).toBigInteger());
                 }
             };
             operations.put(Double.class, dfOp);

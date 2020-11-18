@@ -31,10 +31,7 @@
  */
 package org.spf4j.perf.impl.ms.graphite;
 
-import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
-import com.google.common.util.concurrent.UncheckedExecutionException;
-import com.google.common.util.concurrent.UncheckedTimeoutException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -44,11 +41,18 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import javax.annotation.Nullable;
 import javax.net.SocketFactory;
-import org.spf4j.base.Handler;
+import org.spf4j.base.HandlerNano;
+import org.spf4j.base.UncheckedExecutionException;
+import org.spf4j.base.UncheckedTimeoutException;
+import org.spf4j.failsafe.RetryPolicy;
 import org.spf4j.perf.MeasurementsInfo;
 import org.spf4j.perf.MeasurementStore;
+import org.spf4j.perf.MeasurementStoreQuery;
 import org.spf4j.perf.impl.ms.Id2Info;
 import static org.spf4j.perf.impl.ms.graphite.GraphiteUdpStore.writeMetric;
 import org.spf4j.recyclable.ObjectCreationException;
@@ -66,6 +70,14 @@ public final class GraphiteTcpStore implements MeasurementStore {
   private final RecyclingSupplier<Writer> socketWriterSupplier;
 
   private final InetSocketAddress address;
+
+  @Override
+  @Nullable
+  public MeasurementStoreQuery query() {
+    return null;
+  }
+
+
 
   private static class WriterSupplierFactory implements RecyclingSupplier.Factory<Writer> {
 
@@ -88,7 +100,7 @@ public final class GraphiteTcpStore implements MeasurementStore {
         throw new ObjectCreationException(ex);
       }
       try {
-        return new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), Charsets.UTF_8));
+        return new BufferedWriter(new OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8));
       } catch (IOException ex) {
         try {
           socket.close();
@@ -146,10 +158,11 @@ public final class GraphiteTcpStore implements MeasurementStore {
           final long timeStampMillis, final long... measurements) throws IOException {
     try {
       Template.doOnSupplied(new HandlerImpl(measurements, Id2Info.getInfo(tableId), timeStampMillis),
-              socketWriterSupplier, 3, 1000, 60000, IOException.class);
+              1, TimeUnit.MINUTES,
+              socketWriterSupplier, RetryPolicy.defaultPolicy(), IOException.class);
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      return;
+      throw new IOException("Interupted while saving measurements to " + tableId, ex);
     } catch (TimeoutException ex) {
       throw new UncheckedTimeoutException(ex);
     }
@@ -164,12 +177,15 @@ public final class GraphiteTcpStore implements MeasurementStore {
   public void close() {
     try {
       socketWriterSupplier.dispose();
-    } catch (ObjectDisposeException | InterruptedException ex) {
+    }  catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
+      throw new UncheckedExecutionException(ex);
+    } catch (ObjectDisposeException ex) {
       throw new UncheckedExecutionException(ex);
     }
   }
 
-  private static class HandlerImpl implements Handler<Writer, IOException> {
+  private static class HandlerImpl implements HandlerNano<Writer, Void, IOException> {
 
     private final long[] measurements;
     private final MeasurementsInfo measurementInfo;
@@ -183,12 +199,14 @@ public final class GraphiteTcpStore implements MeasurementStore {
     }
 
     @Override
-    public void handle(final Writer socketWriter, final long deadline) throws IOException {
+    @Nullable
+    public Void handle(final Writer socketWriter, final long deadline) throws IOException {
       for (int i = 0; i < measurements.length; i++) {
         writeMetric(measurementInfo, measurementInfo.getMeasurementName(i),
                 measurements[i], timeStampMillis, socketWriter);
       }
       socketWriter.flush();
+      return null;
     }
   }
 

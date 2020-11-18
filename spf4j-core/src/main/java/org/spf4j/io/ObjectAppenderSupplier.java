@@ -31,9 +31,11 @@
  */
 package org.spf4j.io;
 
-import java.util.function.Function;
-import javax.annotation.Nonnull;
+import java.lang.reflect.Type;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
+import org.spf4j.base.CoreTextMediaType;
+import org.spf4j.reflect.ByTypeSupplier;
 
 
 /**
@@ -41,20 +43,19 @@ import javax.annotation.ParametersAreNonnullByDefault;
  * @author zoly
  */
 @ParametersAreNonnullByDefault
-public interface ObjectAppenderSupplier extends Function<Class, ObjectAppender> {
+@SuppressWarnings("checkstyle:InterfaceIsType")
+public interface ObjectAppenderSupplier extends
+        ByTypeSupplier<ObjectAppender, RuntimeException> {
 
-    @Nonnull
-    <T> ObjectAppender<? super T> get(Class<T> type);
+    @Nullable
+    ObjectAppender get(CoreTextMediaType mr,  Type type);
 
-    default ObjectAppender apply(Class clasz) {
-      return get(clasz);
+    @Override
+    @Nullable
+    default ObjectAppender get(final Type type) {
+      return get(CoreTextMediaType.TEXT_PLAIN, type);
     }
 
-    ObjectAppenderSupplier TO_STRINGER = new ObjectAppenderSupplier() {
-        @Override
-        public <T> ObjectAppender<T> get(final Class<T> type) {
-            return (ObjectAppender<T>) ObjectAppender.TOSTRING_APPENDER;
-        }
-    };
+    ConfigurableAppenderSupplier TO_STRINGER = new ConfigurableAppenderSupplier();
 
 }

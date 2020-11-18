@@ -31,20 +31,18 @@
  */
 package org.spf4j.stackmonitor;
 
-import com.google.common.util.concurrent.UncheckedExecutionException;
+import com.google.common.collect.ImmutableMap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import gnu.trove.set.hash.THashSet;
-import java.io.IOException;
 import java.io.PrintStream;
-import java.lang.invoke.MethodHandle;
-import java.lang.invoke.MethodHandles;
-import java.security.AccessController;
-import java.security.PrivilegedAction;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
 import javax.annotation.Nonnull;
-import org.spf4j.base.Throwables;
+import javax.annotation.ParametersAreNonnullByDefault;
+import org.spf4j.base.Threads;
 
 /**
  * This is a high performance sampling collector. The goal is for the sampling overhead to be minimal. This is better
@@ -54,149 +52,140 @@ import org.spf4j.base.Throwables;
  *
  * @author zoly
  */
-public final class FastStackCollector extends AbstractStackCollector {
+@ParametersAreNonnullByDefault
+public final class FastStackCollector implements ISampler {
 
-  private static final MethodHandle GET_THREADS;
-  private static final MethodHandle DUMP_THREADS;
+  private static final int DEFAULT_MAX_NR_SAMPLED_THREADS
+          = Integer.getInteger("spf4j.stackCollector.maxSampledThreads", 128);
 
   private static final String[] IGNORED_THREADS = {
     "Finalizer",
     "Signal Dispatcher",
     "Reference Handler",
     "Attach Listener",
-    "VM JFR Buffer Thread"
+    "VM JFR Buffer Thread",
+    "DestroyJavaVM"
   };
 
   private final Predicate<Thread> threadFilter;
 
+  private final StackCollector collector;
+
   private Thread[] requestFor = new Thread[]{};
 
+  private final int maxNrSampledThreads;
+
   public FastStackCollector(final boolean collectForMain, final String... xtraIgnoredThreads) {
-    this(createNameBasedFilter(false, collectForMain, xtraIgnoredThreads));
+    this(false, collectForMain, xtraIgnoredThreads);
   }
 
   public FastStackCollector(final boolean collectRunnableThreadsOnly,
                             final boolean collectForMain,
                             final String... xtraIgnoredThreads) {
-    this(createNameBasedFilter(collectRunnableThreadsOnly, collectForMain, xtraIgnoredThreads));
+    this(collectRunnableThreadsOnly, collectForMain, Threads.EMPTY_ARRAY, xtraIgnoredThreads);
   }
 
-  public static Predicate<Thread> createNameBasedFilter(final boolean collectRunnableThreadsOnly,
-                                                        final boolean collectForMain,
-                                                        final String[] xtraIgnoredThreads) {
-    final Set<String> ignoredThreads = new THashSet<>(Arrays.asList(IGNORED_THREADS));
-    if (!collectForMain) {
-      ignoredThreads.add("main");
-    }
-    ignoredThreads.addAll(Arrays.asList(xtraIgnoredThreads));
-    if (collectRunnableThreadsOnly) {
-      return new ThreadNamesPredicate(ignoredThreads).or((Thread t) -> Thread.State.RUNNABLE != t.getState());
-    } else {
-      return new ThreadNamesPredicate(ignoredThreads);
-    }
+  public FastStackCollector(final boolean collectRunnableThreadsOnly,
+                            final boolean collectForMain,
+                            final Thread[] ignored,
+                            final String... xtraIgnoredThreads) {
+    this(createNameBasedFilter(collectRunnableThreadsOnly, collectForMain, ignored, xtraIgnoredThreads),
+            DEFAULT_MAX_NR_SAMPLED_THREADS);
   }
 
   /**
    * @param threadFilter when returns true the thread is being ignored
    */
-  public FastStackCollector(final Predicate<Thread> threadFilter) {
+  public FastStackCollector(final Predicate<Thread> threadFilter, final int maxNrSampledThreads) {
     this.threadFilter = threadFilter;
+    this.collector = new StackCollectorImpl();
+    this.maxNrSampledThreads = maxNrSampledThreads;
   }
 
-  static {
-    final java.lang.reflect.Method getThreads;
-    final java.lang.reflect.Method dumpThreads;
-    try {
-
-      getThreads = Thread.class.getDeclaredMethod("getThreads");
-      dumpThreads = Thread.class.getDeclaredMethod("dumpThreads", Thread[].class);
-    } catch (NoSuchMethodException ex) {
-      throw new ExceptionInInitializerError(ex);
+  public static Predicate<Thread> createNameBasedFilter(final boolean collectRunnableThreadsOnly,
+                                                        final boolean collectForMain,
+                                                        final Thread[] ignored,
+                                                        final String[] xtraIgnoredThreads) {
+    final Set<String> ignoredThreadNames = new THashSet<>(Arrays.asList(IGNORED_THREADS));
+    ignoredThreadNames.addAll(Arrays.asList(xtraIgnoredThreads));
+    Predicate<Thread> result = new ThreadNamesPredicate(ignoredThreadNames);
+    if (collectRunnableThreadsOnly) {
+      result = result.or((Thread t) -> Thread.State.RUNNABLE != t.getState());
     }
-    AccessController.doPrivileged((PrivilegedAction) () -> {
-      getThreads.setAccessible(true);
-      dumpThreads.setAccessible(true);
-      return null; // nothing to return
-    });
-    MethodHandles.Lookup lookup = MethodHandles.lookup();
-    try {
-      GET_THREADS = lookup.unreflect(getThreads);
-      DUMP_THREADS = lookup.unreflect(dumpThreads);
-    } catch (IllegalAccessException ex) {
-      throw new ExceptionInInitializerError(ex);
+    for (Thread th : ignored) {
+      result = result.or((t) -> t == th);
     }
-
+    if (!collectForMain) {
+      Thread mainThread = org.spf4j.base.Runtime.getMainThread();
+      result = result.or((t) -> t == mainThread);
+    }
+    return result;
   }
 
+  /**
+   * @deprecated use Threads.getThreads
+   */
+  @Deprecated
   public static Thread[] getThreads() {
-    try {
-      return (Thread[]) GET_THREADS.invokeExact();
-    } catch (RuntimeException | Error ex) {
-      throw ex;
-    } catch (Throwable ex) {
-      throw new UncheckedExecutionException(ex);
-    }
+    return Threads.getThreads();
   }
 
+  /**
+   * @deprecated use Threads.getStackTraces
+   */
+  @Deprecated
   public static StackTraceElement[][] getStackTraces(final Thread... threads) {
-    StackTraceElement[][] stackDump;
-    try {
-      stackDump = (StackTraceElement[][]) DUMP_THREADS.invokeExact(threads);
-    } catch (RuntimeException | Error ex) {
-      throw ex;
-    } catch (Throwable ex) {
-      throw new RuntimeException(ex);
-    }
-    return stackDump;
+    return Threads.getStackTraces(threads);
   }
 
-  @SuppressFBWarnings("NOS_NON_OWNED_SYNCHRONIZATION") // jdk printstreams are sync I don't want interleaving.
+  /**
+   * @deprecated use Threads.dumpToPrintStream
+   */
+  @Deprecated
   public static void dumpToPrintStream(final PrintStream stream) {
-    synchronized (stream) {
-      Thread[] threads = getThreads();
-      StackTraceElement[][] stackTraces = getStackTraces(threads);
-      for (int i = 0; i < threads.length; i++) {
-        StackTraceElement[] stackTrace = stackTraces[i];
-        if (stackTrace != null && stackTrace.length > 0) {
-          Thread thread = threads[i];
-          stream.println("Thread " + thread.getName());
-          try {
-            Throwables.writeTo(stackTrace, stream, Throwables.PackageDetail.SHORT, true);
-          } catch (IOException ex) {
-            throw new RuntimeException(ex);
-          }
-        }
+    Threads.dumpToPrintStream(stream);
+  }
+
+  @Override
+  @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
+  public void sample() {
+    Thread[] threads = Threads.getThreads();
+    final int nrThreads = Threads.randomFirst(maxNrSampledThreads, threads);
+    if (requestFor.length < nrThreads) {
+      requestFor = new Thread[nrThreads];
+    }
+    int j = 0;
+    for (int i = 0; i < nrThreads; i++) {
+      Thread th = threads[i];
+      if (threadFilter.test(th)) { // not interested in these traces
+        continue;
+      }
+      requestFor[j++] = th;
+    }
+    Arrays.fill(requestFor, j, requestFor.length, null);
+    StackTraceElement[][] stackDump = Threads.getStackTraces(requestFor);
+    for (int i = 0; i < j; i++) {
+      StackTraceElement[] stackTrace = stackDump[i];
+      if (stackTrace != null && stackTrace.length > 0) {
+        collector.collect(stackTrace);
+      } else {
+        collector.collect(new StackTraceElement[]{
+          new StackTraceElement("Thread", requestFor[i].getName(), "", 0)
+        });
       }
     }
   }
 
   @Override
-  @SuppressFBWarnings("EXS_EXCEPTION_SOFTENING_NO_CHECKED")
-  public void sample(final Thread ignore) {
-    Thread[] threads = getThreads();
-    final int nrThreads = threads.length;
-    if (requestFor.length < nrThreads) {
-      requestFor = new Thread[nrThreads - 1];
-    }
-    int j = 0;
-    for (int i = 0; i < nrThreads; i++) {
-      Thread th = threads[i];
-      if (ignore != th && !threadFilter.test(th)) { // not interested in these traces
-        requestFor[j++] = th;
-      }
-    }
-    Arrays.fill(requestFor, j, requestFor.length, null);
-    StackTraceElement[][] stackDump = getStackTraces(requestFor);
-    for (int i = 0; i < j; i++) {
-      StackTraceElement[] stackTrace = stackDump[i];
-      if (stackTrace != null && stackTrace.length > 0) {
-        addSample(stackTrace);
-      } else {
-        addSample(new StackTraceElement[]{
-          new StackTraceElement("Thread", requestFor[i].getName(), "", 0)
-        });
-      }
-    }
+  public Map<String, SampleNode> getCollectionsAndReset() {
+    SampleNode nodes = collector.getAndReset();
+    return nodes == null ? Collections.EMPTY_MAP : ImmutableMap.of("ALL", nodes);
+  }
+
+  @Override
+  public Map<String, SampleNode> getCollections() {
+    SampleNode nodes = collector.get();
+    return nodes == null ? Collections.EMPTY_MAP : ImmutableMap.of("ALL", nodes);
   }
 
   public static final class ThreadNamesPredicate implements Predicate<Thread> {
@@ -211,6 +200,11 @@ public final class FastStackCollector extends AbstractStackCollector {
     public boolean test(@Nonnull final Thread input) {
       return ignoredThreadNames.contains(input.getName());
     }
+  }
+
+  @Override
+  public String toString() {
+    return "FastStackCollector{" + "threadFilter=" + threadFilter + ", collector=" + collector + '}';
   }
 
 }

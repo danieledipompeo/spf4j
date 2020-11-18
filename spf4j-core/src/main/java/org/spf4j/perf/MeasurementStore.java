@@ -33,6 +33,7 @@ package org.spf4j.perf;
 
 import java.io.Closeable;
 import java.io.IOException;
+import javax.annotation.Nullable;
 
 /**
  * A measurement store.
@@ -56,7 +57,7 @@ public interface MeasurementStore extends Closeable {
    * Save measurements.
    *
    * @param tableId - the table ID to store measurements for.
-   * @param timeStampMillis - the timestamp of the measurement (millis since Jan 1 1970 UTC)
+   * @param timeStampMillis - the timestamp of the measurement (milliseconds since Jan 1 1970 UTC)
    * @param measurements - the measurements to persist. (same order as declared)
    * @throws IOException - IO issues.
    */
@@ -69,5 +70,13 @@ public interface MeasurementStore extends Closeable {
    * @throws IOException - IO issues.
    */
   void flush() throws IOException;
+
+
+  /**
+   * @return a query-able interface for the store.
+   */
+  @Nullable
+  MeasurementStoreQuery query();
+
 
 }

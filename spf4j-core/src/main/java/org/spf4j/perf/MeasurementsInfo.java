@@ -36,6 +36,8 @@ import javax.annotation.concurrent.Immutable;
 import javax.management.openmbean.CompositeType;
 import javax.management.openmbean.OpenDataException;
 import javax.management.openmbean.OpenType;
+import org.spf4j.tsdb2.avro.Aggregation;
+import org.spf4j.tsdb2.avro.MeasurementType;
 
 /**
  *
@@ -54,11 +56,17 @@ public interface MeasurementsInfo {
 
   String[] getMeasurementUnits();
 
+  Aggregation[] getAggregations();
+
   String getMeasurementName(int measurementNr);
 
   String getMeasurementUnit(int measurementNr);
 
+  Aggregation getMeasurementAggregation(int measurementNr);
+
   int getNumberOfMeasurements();
+
+  MeasurementType getMeasurementType();
 
   default CompositeType toCompositeType() {
     OpenType<?>[] types = new OpenType[getNumberOfMeasurements()];

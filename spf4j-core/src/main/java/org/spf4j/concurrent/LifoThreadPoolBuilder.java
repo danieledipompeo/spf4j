@@ -31,8 +31,6 @@
  */
 package org.spf4j.concurrent;
 
-import java.util.ArrayDeque;
-import java.util.Queue;
 import static org.spf4j.concurrent.RejectedExecutionHandler.REJECT_EXCEPTION_EXEC_HANDLER;
 
 /**
@@ -46,7 +44,6 @@ public final class LifoThreadPoolBuilder {
   private int coreSize;
   private int maxSize;
   private int maxIdleTimeMillis;
-  private Queue<Runnable> taskQueue;
   private int queueSizeLimit;
   private boolean daemonThreads;
   private int spinLockCount;
@@ -61,10 +58,9 @@ public final class LifoThreadPoolBuilder {
     coreSize = 0;
     maxSize = Short.MAX_VALUE;
     maxIdleTimeMillis = 60000;
-    taskQueue = new ArrayDeque<>(256);
     queueSizeLimit = 0;
     daemonThreads = false;
-    spinLockCount = 1024;
+    spinLockCount = 100;
     threadPriority = Thread.NORM_PRIORITY;
     mutable = false;
     jmxEnabled = false;
@@ -91,11 +87,6 @@ public final class LifoThreadPoolBuilder {
 
   public LifoThreadPoolBuilder withMaxIdleTimeMillis(final int maxIdleTimeMillis) {
     this.maxIdleTimeMillis = maxIdleTimeMillis;
-    return this;
-  }
-
-  public LifoThreadPoolBuilder withTaskQueue(final Queue<Runnable> taskQueue) {
-    this.taskQueue = taskQueue;
     return this;
   }
 
@@ -135,24 +126,12 @@ public final class LifoThreadPoolBuilder {
   }
 
   public LifoThreadPool build() {
-    LifoThreadPool result;
-    if (mutable) {
-      result = new MutableLifoThreadPoolExecutorSQP(poolName, coreSize, maxSize, maxIdleTimeMillis,
-              taskQueue, queueSizeLimit, daemonThreads, spinLockCount, rejectionHandler, threadPriority);
-    } else {
-      result = new LifoThreadPoolExecutorSQP(poolName, coreSize, maxSize, maxIdleTimeMillis,
-              taskQueue, queueSizeLimit, daemonThreads, spinLockCount, rejectionHandler, threadPriority);
-    }
-    if (jmxEnabled) {
-      result.exportJmx();
-    }
-    return result;
+    return buildMutable();
   }
 
   public MutableLifoThreadPool buildMutable() {
-    MutableLifoThreadPool result = new MutableLifoThreadPoolExecutorSQP(poolName, coreSize, maxSize, maxIdleTimeMillis,
-            taskQueue, queueSizeLimit, daemonThreads, spinLockCount, rejectionHandler, threadPriority);
-
+    MutableLifoThreadPool result = new LifoThreadPoolExecutorSQP(poolName, coreSize, maxSize, maxIdleTimeMillis,
+            queueSizeLimit, daemonThreads, rejectionHandler, threadPriority);
     if (jmxEnabled) {
       result.exportJmx();
     }

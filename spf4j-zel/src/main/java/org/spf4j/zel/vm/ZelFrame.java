@@ -57,7 +57,7 @@ public final class ZelFrame implements Serializable {
 
   private final int index;
 
-  public static String newSource(final String sourceDetail) {
+  public static String newSource(final CharSequence sourceDetail) {
     String id = "zel_" + IDX.getAndIncrement();
     SOURCES.put(id, CharSequences.toLineNumbered(0, sourceDetail));
     return id;
@@ -72,6 +72,9 @@ public final class ZelFrame implements Serializable {
     for (int i = 0; i < instructions.length; i++) {
       ParsingContext.Location loc = debug[i];
       int lineNr = loc.getRow();
+      if (lineNr < 0) {
+        continue;
+      }
       StringBuilder existing = annotations[lineNr];
       if (existing == null) {
         existing = new StringBuilder();

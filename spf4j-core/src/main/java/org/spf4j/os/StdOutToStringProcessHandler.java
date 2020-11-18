@@ -31,21 +31,69 @@
  */
 package org.spf4j.os;
 
-import com.google.common.io.CharStreams;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.Charset;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.spf4j.base.Strings;
 
 /**
- *
  * @author Zoltan Farkas
  */
+@SuppressFBWarnings("FCCD_FIND_CLASS_CIRCULAR_DEPENDENCY")
 public final class StdOutToStringProcessHandler implements ProcessHandler<String, String> {
+
+  private Logger log;
+
+  public StdOutToStringProcessHandler() {
+    this.log = Logger.getLogger(StdOutToStringProcessHandler.class.getName());
+  }
+
+  public void started(final Process p) {
+    int pid = ProcessUtil.getPid(p);
+    log.log(Level.FINE, "Started {0} with pid={1} ", new Object[]{p, pid});
+    this.log = Logger.getLogger(log.getName() + '.' + pid);
+  }
 
   @Override
   public String handleStdOut(final InputStream stdout) throws IOException {
-    return CharStreams.toString(new InputStreamReader(stdout, Charset.defaultCharset()));
+    StringBuilder result = new StringBuilder(128);
+    BufferedReader reader = new BufferedReader(new InputStreamReader(stdout, Charset.defaultCharset()));
+    String line;
+    while ((line = reader.readLine()) != null) {
+      log.fine(line);
+      result.append(line).append(Strings.EOL);
+    }
+    log.fine("done with stdout");
+    return result.toString();
+  }
+
+  @Override
+  public String handleStdErr(final InputStream stderr) throws IOException {
+    StringBuilder result = new StringBuilder(128);
+    BufferedReader reader = new BufferedReader(new InputStreamReader(stderr, Charset.defaultCharset()));
+    String line;
+    while ((line = reader.readLine()) != null) {
+      if (line.startsWith("INFO")) {
+        log.info(line);
+      } else if (line.startsWith("WARN")) {
+        log.warning(line);
+      } else {
+        log.severe(line);
+      }
+      result.append(line).append(Strings.EOL);
+    }
+    log.fine("done with stderr");
+    return result.toString();
+  }
+
+  @Override
+  public String toString() {
+    return "StdOutToStringProcessHandler{" + "log=" + log + '}';
   }
 
 }

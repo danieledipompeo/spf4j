@@ -33,7 +33,10 @@ package org.spf4j.base;
 
 import com.google.common.annotations.Beta;
 import com.google.common.annotations.GwtCompatible;
+import com.google.common.annotations.GwtIncompatible;
 import com.google.common.collect.ObjectArrays;
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Array;
 
 /**
  * Array utilities.
@@ -45,9 +48,15 @@ public final class Arrays {
 
   public static final Object[] EMPTY_OBJ_ARRAY = new Object[]{};
 
+  public static final Annotation[] EMPTY_ANNOT_ARRAY = new Annotation[]{};
+
+  public static final Class[] EMPTY_CLASS_ARRAY = new Class[]{};
+
   public static final String[] EMPTY_STRING_ARRAY = new String[]{};
 
   public static final byte[] EMPTY_BYTE_ARRAY = new byte[]{};
+
+  public static final boolean[] EMPTY_BOOLEAN_ARRAY = new boolean[]{};
 
   public static final long[] EMPTY_LONG_ARRAY = new long[]{};
 
@@ -117,6 +126,16 @@ public final class Arrays {
     return true;
   }
 
+  public static boolean equals(final byte[] a, final byte[] b, final int a1,  final int b1, final int length) {
+    for (int i = a1, j = b1, k = 0; k < length; i++, j++, k++) {
+      if (a[i] != b[j]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+
   public static int search(final char[] array, final char c) {
     for (int i = 0; i < array.length; i++) {
       if (array[i] == c) {
@@ -139,10 +158,49 @@ public final class Arrays {
     return copy;
   }
 
+  public static <T> T[] append(final T[] array, final T value) {
+    T[] result = java.util.Arrays.copyOf(array, array.length + 1);
+    result[array.length] = value;
+    return result;
+  }
+
+  @GwtIncompatible
+  public static <T> T[] preppend(final T[] array, final T value) {
+    Class<? extends Object[]> aClass = array.getClass();
+    T[] copy = ((Object) aClass == (Object) Object[].class)
+            ? (T[]) new Object[array.length + 1]
+            : (T[]) Array.newInstance(aClass.getComponentType(), array.length + 1);
+    System.arraycopy(array, 0, copy, 1, array.length);
+
+    copy[0] = value;
+    return copy;
+  }
+
+  @GwtIncompatible
+  public static <T> T[] preppend(final T[] array, final T... values) {
+    Class<? extends Object[]> aClass = array.getClass();
+    T[] copy = ((Object) aClass == (Object) Object[].class)
+            ? (T[]) new Object[array.length + values.length]
+            : (T[]) Array.newInstance(aClass.getComponentType(), array.length + values.length);
+    System.arraycopy(array, 0, copy, values.length, array.length);
+    System.arraycopy(values, 0, copy, 0, values.length);
+    return copy;
+  }
+
+  public static <T> T[] append(final T[] array, final T... values) {
+    if (values.length == 0) {
+      return array;
+    }
+    T[] result = java.util.Arrays.copyOf(array, array.length + values.length);
+    System.arraycopy(values, 0, result, array.length, values.length);
+    return result;
+  }
+
+
   public static <T> T[] concat(final T[]... arrays) {
     if (arrays.length < 2) {
       throw new IllegalArgumentException("You should concatenate at least 2 arrays: "
-              + java.util.Arrays.deepToString(arrays));
+              + arrays.length);
     }
     int newLength = 0;
     for (T[] arr : arrays) {
@@ -151,6 +209,24 @@ public final class Arrays {
     T[] result = ObjectArrays.newArray(arrays[0], newLength);
     int destIdx = 0;
     for (T[] arr : arrays) {
+      System.arraycopy(arr, 0, result, destIdx, arr.length);
+      destIdx += arr.length;
+    }
+    return result;
+  }
+
+  public static byte[] concat(final  byte[]... arrays) {
+    if (arrays.length < 2) {
+      throw new IllegalArgumentException("You should concatenate at least 2 arrays: "
+              + arrays.length);
+    }
+    int newLength = 0;
+    for (byte[] arr : arrays) {
+      newLength += arr.length;
+    }
+    byte[] result = new byte[newLength];
+    int destIdx = 0;
+    for (byte[] arr : arrays) {
       System.arraycopy(arr, 0, result, destIdx, arr.length);
       destIdx += arr.length;
     }

@@ -39,7 +39,6 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.spf4j.base.AbstractRunnable;
-import static org.spf4j.base.Runtime.WAIT_FOR_SHUTDOWN_MILLIS;
 
 /**
  *
@@ -67,13 +66,21 @@ public final class DefaultScheduler {
       @Override
       public void doRun() throws InterruptedException {
         INSTANCE.shutdown();
-        INSTANCE.awaitTermination(WAIT_FOR_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS);
+        INSTANCE.awaitTermination(org.spf4j.base.Runtime.WAIT_FOR_SHUTDOWN_NANOS, TimeUnit.NANOSECONDS);
         List<Runnable> remaining = INSTANCE.shutdownNow();
         if (remaining.size() > 0) {
-          System.err.println("Remaining tasks: " + remaining);
+          org.spf4j.base.Runtime.error("Remaining tasks: " + remaining);
         }
       }
     });
+  }
+
+  public static ScheduledExecutorService instance() {
+    return INSTANCE;
+  }
+
+  public static ListeningScheduledExecutorService listenableInstance() {
+    return LISTENABLE_INSTANCE;
   }
 
   private DefaultScheduler() {
@@ -89,15 +96,15 @@ public final class DefaultScheduler {
   public static ScheduledFuture<?> scheduleAllignedAtFixedRateMillis(
           final Runnable command, final long millisInterval) {
     long currentTime = System.currentTimeMillis();
-    long nextScheduleTime;
+    long nextScheduleDelay;
     if (millisInterval < HOUR_MILLIS) {
       long millisPastHour = currentTime % HOUR_MILLIS;
-      nextScheduleTime = (millisPastHour / millisInterval + 1) * millisInterval + currentTime - millisPastHour;
+      nextScheduleDelay =  millisInterval - millisPastHour % millisInterval;
     } else {
       long millisPastDay = currentTime % DAY_MILLIS;
-      nextScheduleTime = (millisPastDay / millisInterval + 1) * millisInterval + currentTime - millisPastDay;
+      nextScheduleDelay =  millisInterval - millisPastDay % millisInterval;
     }
     return INSTANCE.scheduleAtFixedRate(
-            command, nextScheduleTime - currentTime, millisInterval, TimeUnit.MILLISECONDS);
+            command, nextScheduleDelay, millisInterval, TimeUnit.MILLISECONDS);
   }
 }

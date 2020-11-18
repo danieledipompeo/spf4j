@@ -31,23 +31,19 @@
  */
 package org.spf4j.io.appenders;
 
-import java.io.IOException;
-import org.joda.time.ReadableInstant;
-import org.joda.time.format.DateTimeFormatter;
-import org.joda.time.format.ISODateTimeFormat;
+import java.time.Instant;
+import org.spf4j.base.DateTimeFormats;
 import org.spf4j.io.ObjectAppender;
 
 /**
  *
  * @author zoly
  */
-public final class InstantAppender implements ObjectAppender<ReadableInstant> {
+public final class InstantAppender implements ObjectAppender<Instant> {
 
-    public static final DateTimeFormatter FMT = ISODateTimeFormat.dateTime().withOffsetParsed();
-    
-    @Override
-    public void append(final ReadableInstant object, final Appendable appendTo) throws IOException {
-        FMT.printTo(appendTo, object.getMillis());
-    }
-    
+  @Override
+  public void append(final Instant object, final Appendable appendTo) {
+    DateTimeFormats.TS_FORMAT.formatTo(object, appendTo);
+  }
+
 }

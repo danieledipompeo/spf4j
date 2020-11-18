@@ -33,15 +33,23 @@ package org.spf4j.pool.jdbc;
 
 import com.google.common.annotations.Beta;
 import java.io.PrintWriter;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLTimeoutException;
+import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.logging.Logger;
 import javax.sql.DataSource;
+import org.spf4j.jdbc.DataSourceEx;
 import org.spf4j.recyclable.ObjectBorrowException;
 import org.spf4j.recyclable.ObjectCreationException;
+import org.spf4j.recyclable.ObjectDisposeException;
 import org.spf4j.recyclable.RecyclingSupplier;
 import org.spf4j.recyclable.impl.RecyclingSupplierBuilder;
 
@@ -50,83 +58,150 @@ import org.spf4j.recyclable.impl.RecyclingSupplierBuilder;
  * @author zoly
  */
 @Beta
-public final class PooledDataSource implements DataSource {
+public final class PooledDataSource implements DataSourceEx, AutoCloseable {
+
+  private final RecyclingSupplier<Connection> pool;
+
+  public PooledDataSource(final int initialSize, final int maxSize,
+          final String driverName, final String url, final String user, final String password)
+          throws ObjectCreationException {
+    this(initialSize, maxSize, new JdbcConnectionFactory(driverName, url, user, password));
+  }
+
+  public PooledDataSource(final int initialSize, final int maxSize,
+          final String driverName, final String url, final Properties properties, final int loginTimeoutSeconds)
+          throws ObjectCreationException {
+    this(initialSize, maxSize, new JdbcConnectionFactory(driverName, url, properties, loginTimeoutSeconds));
+  }
+
+  public PooledDataSource(final int initialSize, final int maxSize,
+          final RecyclingSupplier.Factory<Connection> jdbcConnectionFactory) throws ObjectCreationException {
+    RecyclingSupplierBuilder<Connection> builder
+            = new RecyclingSupplierBuilder<>(maxSize, jdbcConnectionFactory);
+    builder.withInitialSize(initialSize);
+    pool = builder.build();
+  }
+
+  @Override
+  public Connection getConnection() throws SQLException {
+    Connection raw;
+    try {
+      raw = pool.get();
+    } catch (InterruptedException | ObjectBorrowException | ObjectCreationException ex) {
+      throw new SQLException(ex);
+    } catch (TimeoutException ex) {
+      throw new SQLTimeoutException(ex);
+    }
+    return (Connection) Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(),
+            new Class<?>[]{Connection.class}, new PooledConnectionInvocationHandler(raw, pool));
+  }
+
+  @Override
+  public Connection getConnection(final long timeout, final TimeUnit unit) throws SQLException {
+    Connection raw;
+    try {
+      raw = pool.tryGet(timeout, unit);
+      if (raw == null) {
+        throw new SQLTimeoutException("Unable to obtain connection in " + timeout + " " + unit);
+      }
+    } catch (InterruptedException | ObjectBorrowException | ObjectCreationException ex) {
+      throw new SQLException(ex);
+    }
+    return (Connection) Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(),
+            new Class<?>[]{Connection.class}, new PooledConnectionInvocationHandler(raw, pool));
+  }
+
+  @Override
+  public Connection getConnection(final String username, final String password)
+          throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public PrintWriter getLogWriter() throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public void setLogWriter(final PrintWriter out) throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public void setLoginTimeout(final int seconds) throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public int getLoginTimeout() throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public <T> T unwrap(final Class<T> iface) throws SQLException {
+    if (iface.equals(DataSource.class) || iface.equals(PooledDataSource.class)) {
+      return (T) this;
+    } else {
+      throw new SQLException("Not a wrapper for " + iface);
+    }
+  }
+
+  @Override
+  public boolean isWrapperFor(final Class<?> iface) {
+    return iface.equals(DataSource.class) || iface.equals(PooledDataSource.class);
+  }
+
+  @Override
+  public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+    throw new SQLFeatureNotSupportedException();
+  }
+
+  @Override
+  public String toString() {
+    return "PooledDataSource{" + "pool=" + pool + '}';
+  }
+
+  @Override
+  public void close() throws ObjectDisposeException, InterruptedException {
+    pool.dispose();
+  }
+
+  private static final class PooledConnectionInvocationHandler implements InvocationHandler {
+
+    private final Connection raw;
 
     private final RecyclingSupplier<Connection> pool;
 
-
-    public PooledDataSource(final int initialSize, final int maxSize,
-            final String driverName, final String url, final String user, final String password)
-            throws ObjectCreationException {
-        final JdbcConnectionFactory jdbcConnectionFactory =
-                new JdbcConnectionFactory(driverName, url, user, password);
-        RecyclingSupplierBuilder<Connection> builder =
-                new RecyclingSupplierBuilder<>(maxSize, jdbcConnectionFactory);
-        builder.withInitialSize(initialSize);
-        pool = builder.build();
-        jdbcConnectionFactory.setPool(pool);
+    PooledConnectionInvocationHandler(final Connection raw, final RecyclingSupplier<Connection> pool) {
+      this.raw = raw;
+      this.pool = pool;
     }
+    private Exception ex;
+    private boolean closed = false;
 
     @Override
-    public Connection getConnection() throws SQLException {
+    public Object invoke(final Object proxy, final Method method, final Object[] args) throws Exception {
+      String mName = method.getName();
+      if ("close".equals(mName)) {
+        if (!closed) {
+          pool.recycle(raw, ex);
+          ex = null;
+          closed = true;
+        }
+        return null;
+      } else {
+        if (closed) {
+          throw new IllegalStateException("not aowner of this connection,"
+                  + " it has been returned already to " + pool);
+        }
         try {
-            return pool.get();
-        } catch (InterruptedException | ObjectBorrowException | ObjectCreationException ex) {
-            throw new SQLException(ex);
-        } catch (TimeoutException ex) {
-          throw new SQLTimeoutException(ex);
+          return method.invoke(raw, args);
+        } catch (IllegalAccessException | InvocationTargetException | RuntimeException e) {
+          ex = e;
+          throw e;
         }
+      }
     }
-
-    @Override
-    public Connection getConnection(final String username, final String password)
-            throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public PrintWriter getLogWriter() throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public void setLogWriter(final PrintWriter out) throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public void setLoginTimeout(final int seconds) throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public int getLoginTimeout() throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public <T> T unwrap(final Class<T> iface) throws SQLException {
-        if (iface.equals(DataSource.class) || iface.equals(PooledDataSource.class)) {
-            return (T) this;
-        } else {
-            throw new SQLException("Not a wrapper for " + iface);
-        }
-    }
-
-    @Override
-    public boolean isWrapperFor(final Class<?> iface) {
-        return iface.equals(DataSource.class) || iface.equals(PooledDataSource.class);
-    }
-
-    @Override
-    public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-        throw new SQLFeatureNotSupportedException();
-    }
-
-    @Override
-    public String toString() {
-        return "PooledDataSource{" + "pool=" + pool + '}';
-    }
-
+  }
 
 }

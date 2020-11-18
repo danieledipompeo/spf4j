@@ -52,10 +52,10 @@ public interface TypeMap<H> extends ByTypeSupplier<H, RuntimeException> {
   /**
    * Get all Objects associated to all unrelated compatible types.
    *
-   * for example we habe Object O of type T a subtype of T1 and T2.
+   * for example we have Object O of type T a subtype of T1 and T2.
    * if this typemap contains Objects mapped to T1 and T2, those 2 objects
    * will be returned if T1 and T2 are not related (subtypes of each other)
-   * if T1 extends T2 the obeject mapped to the most specific type is returned.
+   * if T1 extends T2 the object mapped to the most specific type is returned.
    *
    * @param t
    * @return
@@ -107,10 +107,11 @@ public interface TypeMap<H> extends ByTypeSupplier<H, RuntimeException> {
    * @param type
    * @param object
    */
-  default void safePut(final Type type, final H object) {
+  default TypeMap<H> safePut(final Type type, final H object) {
     if (!putIfNotPresent(type, object)) {
       throw new IllegalArgumentException("Cannot put " + type + ", " + object + " exiting mapping present");
     }
+    return this;
   }
 
   /**

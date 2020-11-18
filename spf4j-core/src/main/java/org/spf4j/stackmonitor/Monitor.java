@@ -71,6 +71,7 @@ public final class Monitor {
 
     private Monitor() { }
 
+    @SuppressWarnings("checkstyle:regexp")
     public static void main(final String[] args)
             throws ClassNotFoundException, NoSuchMethodException, IllegalAccessException,
             InvocationTargetException  {
@@ -103,7 +104,8 @@ public final class Monitor {
             System.exit(SysExits.EX_USAGE.exitCode());
         }
 
-        final Sampler sampler = new Sampler(options.sampleInterval, options.dumpInterval, new SimpleStackCollector(),
+        final Sampler sampler = new Sampler(options.sampleInterval, options.dumpInterval,
+                (t) -> new FastStackCollector(false, true, new Thread[]{t}),
                 options.dumpFolder, options.dumpFilePrefix);
         Runtime.getRuntime().addShutdownHook(new Thread(new AbstractRunnable() {
 

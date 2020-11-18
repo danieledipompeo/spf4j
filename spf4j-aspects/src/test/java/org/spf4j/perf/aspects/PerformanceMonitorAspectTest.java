@@ -32,10 +32,20 @@
 package org.spf4j.perf.aspects;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.List;
+import java.util.stream.Collectors;
 import org.spf4j.annotations.PerformanceMonitor;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.jmx.JmxExport;
 import org.spf4j.jmx.Registry;
+import org.spf4j.log.Level;
+import org.spf4j.test.log.LogAssert;
+import org.spf4j.test.log.LogCollection;
+import org.spf4j.test.log.TestLogRecord;
+import org.spf4j.test.log.TestLoggers;
+import org.spf4j.test.matchers.LogMatchers;
 
 /**
  *
@@ -44,21 +54,34 @@ import org.spf4j.jmx.Registry;
 @SuppressFBWarnings("MDM_THREAD_YIELD")
 public final class PerformanceMonitorAspectTest {
 
-    /**
-     * Test of performanceMonitoredMethod method, of class PerformanceMonitorAspect.
-     */
-    @Test
-    public void testPerformanceMonitoredMethod() throws Exception {
-        Registry.export(this);
-        for (int i = 0; i < 10; i++) {
-            somethingTomeasure(i, "Test");
-        }
-    }
+  private static final Logger LOG = LoggerFactory.getLogger(PerformanceMonitorAspectTest.class);
 
-    @PerformanceMonitor(warnThresholdMillis = 1)
-    @JmxExport
-    public void somethingTomeasure(final int arg1, final String arg2) throws InterruptedException {
-        Thread.sleep(10);
+  /**
+   * Test of performanceMonitoredMethod method, of class PerformanceMonitorAspect.
+   */
+  @Test
+  public void testPerformanceMonitoredMethod() throws Exception {
+    TestLoggers ls = TestLoggers.sys();
+    // aspectj logs errors on MaxosX
+    LogCollection<List<TestLogRecord>> collection = ls.collect("org.aspectj.weaver.bcel",
+            org.spf4j.log.Level.ERROR, true, Collectors.toList());
+    Registry.export(this);
+    LogAssert expect = ls.expect("org.spf4j.perf.aspects.PerformanceMonitorAspect", Level.WARN,
+            LogMatchers.hasFormat("Execution time  {} ms for {} exceeds warning threshold of {} ms, arguments {}"));
+    for (int i = 0; i < 10; i++) {
+      somethingTomeasure(i, "Test");
     }
+    expect.assertObservation();
+    List<TestLogRecord> errors = collection.get();
+    if (!errors.isEmpty()) {
+      LOG.info("aspectj misbehaves:", errors);
+    }
+  }
+
+  @PerformanceMonitor(warnThresholdMillis = 1)
+  @JmxExport
+  public void somethingTomeasure(final int arg1, final String arg2) throws InterruptedException {
+    Thread.sleep(10);
+  }
 
 }

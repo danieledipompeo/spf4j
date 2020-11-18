@@ -31,6 +31,7 @@
  */
 package org.spf4j.text;
 //CHECKSTYLE:OFF
+import com.google.common.collect.Sets;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.text.Annotation;
 import java.text.AttributedCharacterIterator;
@@ -40,13 +41,14 @@ import static java.text.CharacterIterator.DONE;
 import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
-import java.util.Hashtable;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 
 /**
  * An AttributedString holds text and related attribute information. It
@@ -75,15 +77,15 @@ public final class AttributedString {
     private static final int ARRAY_SIZE_INCREMENT = 10;
 
     // field holding the text
-    String text;
+    private String text;
 
     // fields holding run attribute information
     // run attributes are organized by run
-    int runArraySize;               // current size of the arrays
-    int runCount;                   // actual number of runs, <= runArraySize
-    int runStarts[];                // start index for each run
-    ArrayList<Attribute> runAttributes[];         // vector of attribute keys for each run
-    ArrayList<Object> runAttributeValues[];    // parallel vector of attribute values for each run
+    private int runArraySize;               // current size of the arrays
+    private int runCount;                   // actual number of runs, <= runArraySize
+    private int runStarts[];                // start index for each run
+    private ArrayList<Attribute> runAttributes[];         // vector of attribute keys for each run
+    private ArrayList<Object> runAttributeValues[];    // parallel vector of attribute values for each run
 
     /**
      * Constructs an AttributedString instance with the given
@@ -93,7 +95,6 @@ public final class AttributedString {
      * AttributedString from.
      * @throws NullPointerException if iterators is null
      */
-    @SuppressFBWarnings("WEM_WEAK_EXCEPTION_MESSAGING")
     AttributedString(@Nonnull AttributedCharacterIterator[] iterators) {
         if (iterators.length == 0) {
             text = "";
@@ -263,13 +264,18 @@ public final class AttributedString {
             return;
 
         // Select attribute keys to be taken care of
-        HashSet<Attribute> keys = new HashSet<>();
+        HashSet<Attribute> keys;
+        Set<Attribute> allAttributeKeys = text.getAllAttributeKeys();
         if (attributes == null) {
-            keys.addAll(text.getAllAttributeKeys());
+            keys = new HashSet<>(allAttributeKeys);
         } else {
-            for (int i = 0; i < attributes.length; i++)
-                keys.add(attributes[i]);
-            keys.retainAll(text.getAllAttributeKeys());
+            keys = Sets.newHashSetWithExpectedSize(allAttributeKeys.size());
+            for (int i = 0, l = attributes.length; i < l; i++) {
+                Attribute attribute = attributes[i];
+                if (allAttributeKeys.contains(attribute)) {
+                  keys.add(attribute);
+                }
+            }
         }
         if (keys.isEmpty())
             return;
@@ -490,11 +496,12 @@ public final class AttributedString {
         ArrayList<Object> newRunAttributeValues = null;
 
         if (copyAttrs) {
-            ArrayList<Attribute> oldRunAttributes = runAttributes[runIndex - 1];
-            ArrayList<Object> oldRunAttributeValues = runAttributeValues[runIndex - 1];
+            int rim1 = runIndex - 1;
+            ArrayList<Attribute> oldRunAttributes = runAttributes[rim1];
             if (oldRunAttributes != null) {
                 newRunAttributes = new ArrayList<>(oldRunAttributes);
             }
+            ArrayList<Object> oldRunAttributeValues = runAttributeValues[rim1];
             if (oldRunAttributeValues != null) {
                 newRunAttributeValues =  new ArrayList<>(oldRunAttributeValues);
             }
@@ -521,23 +528,22 @@ public final class AttributedString {
         for (int i = beginRunIndex; i < endRunIndex; i++) {
             int keyValueIndex = -1; // index of key and value in our vectors; assume we don't have an entry yet
            ArrayList<Attribute> runAttribute = runAttributes[i];
-            if (runAttribute == null) {
-                ArrayList<Attribute> newRunAttributes = new ArrayList<>();
-                ArrayList<Object> newRunAttributeValues = new ArrayList<>();
-                runAttributes[i] = runAttribute = newRunAttributes;
-                runAttributeValues[i] = newRunAttributeValues;
+           ArrayList<Object> runAttributeValue = runAttributeValues[i];
+           if (runAttribute == null) {
+                runAttributes[i] = runAttribute = new ArrayList<>();
+                runAttributeValues[i] = runAttributeValue = new ArrayList<>();
             } else {
                 // check whether we have an entry already
-                keyValueIndex = runAttributes[i].indexOf(attribute);
+                keyValueIndex = runAttribute.indexOf(attribute);
             }
 
             if (keyValueIndex == -1) {
                 // create new entry
                 runAttribute.add(attribute);
-                runAttributeValues[i].add(value);
+                runAttributeValue.add(value);
             } else {
                 // update existing entry
-                runAttributeValues[i].set(keyValueIndex, value);
+                runAttributeValue.set(keyValueIndex, value);
             }
         }
     }
@@ -557,7 +563,7 @@ public final class AttributedString {
 
     // length is package private so that CharacterIteratorFieldDelegate can
     // access it without creating an AttributedCharacterIterator.
-    int length() {
+    private int length() {
         return text.length();
     }
 
@@ -565,6 +571,7 @@ public final class AttributedString {
         return text.charAt(index);
     }
 
+    @Nullable
     private synchronized Object getAttribute(Attribute attribute, int runIndex) {
         ArrayList<Attribute> currentRunAttributes = runAttributes[runIndex];
         ArrayList<Object> currentRunAttributeValues = runAttributeValues[runIndex];
@@ -580,7 +587,9 @@ public final class AttributedString {
         }
     }
 
-    // gets an attribute value, but returns an annotation only if it's range does not extend outside the range beginIndex..endIndex
+    // gets an attribute value, but returns an annotation only
+    // if it's range does not extend outside the range beginIndex..endIndex
+    @Nullable
     private Object getAttributeCheckRange(Attribute attribute, int runIndex, int beginIndex, int endIndex) {
         Object value = getAttribute(attribute, runIndex);
         if (value instanceof Annotation) {
@@ -700,7 +709,8 @@ public final class AttributedString {
 
         // note on synchronization:
         // we don't synchronize on the iterator, assuming that an iterator is only used in one thread.
-        // we do synchronize access to the AttributedString however, since it's more likely to be shared between threads.
+        // we do synchronize access to the AttributedString however,
+        // since it's more likely to be shared between threads.
 
         // start and end index for our iteration
         private int beginIndex;
@@ -900,11 +910,10 @@ public final class AttributedString {
             }
         }
 
+        @SuppressFBWarnings("SEO_SUBOPTIMAL_EXPRESSION_ORDER") // looks like a FP
         public Map<Attribute,Object> getAttributes() {
             if (runAttributes == null || currentRunIndex == -1 || runAttributes[currentRunIndex] == null) {
-                // ??? would be nice to return null, but current spec doesn't allow it
-                // returning Hashtable saves AttributeMap from dealing with emptiness
-                return new Hashtable<>();
+                return Collections.EMPTY_MAP;
             }
             return new AttributeMap(currentRunIndex, beginIndex, endIndex);
         }
@@ -937,6 +946,7 @@ public final class AttributedString {
             }
         }
 
+        @Nullable
         public Object getAttribute(Attribute attribute) {
             int runIndex = currentRunIndex;
             if (runIndex < 0) {
@@ -1002,9 +1012,9 @@ public final class AttributedString {
 
     final private class AttributeMap extends AbstractMap<Attribute,Object> {
 
-        final int runIndex;
-        final int beginIndex;
-        final int endIndex;
+        private final int runIndex;
+        private final int beginIndex;
+        private final int endIndex;
 
         AttributeMap(int runIndex, int beginIndex, int endIndex) {
             this.runIndex = runIndex;
@@ -1034,6 +1044,7 @@ public final class AttributedString {
             return set;
         }
 
+        @Nullable
         public Object get(Object key) {
             return AttributedString.this.getAttributeCheckRange((Attribute) key, runIndex, beginIndex, endIndex);
         }
@@ -1050,10 +1061,10 @@ public final class AttributedString {
 
 }
 
-class AttributeEntry implements Map.Entry<Attribute,Object> {
+final class AttributeEntry implements Map.Entry<Attribute,Object> {
 
-    private Attribute key;
-    private Object value;
+    private final Attribute key;
+    private final Object value;
 
     AttributeEntry(Attribute key, Object value) {
         this.key = key;

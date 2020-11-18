@@ -31,31 +31,17 @@
  */
 package org.spf4j.io.appenders;
 
-import com.google.common.base.Charsets;
-import java.io.IOException;
-import org.apache.avro.Schema;
-import org.apache.avro.generic.GenericDatumWriter;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.io.JsonEncoder;
-import org.spf4j.io.AppendableOutputStream;
-import org.spf4j.io.ObjectAppender;
+import org.spf4j.base.CoreTextMediaType;
+import org.spf4j.io.appenders.json.GenericRecordJsonAppender;
 
 /**
  *
- * @author zoly
+ * @author Zoltan Farkas
  */
-public final class GenericRecordAppender implements ObjectAppender<GenericRecord> {
-    
+public final  class GenericRecordAppender extends GenericRecordJsonAppender {
 
-    @Override
-    public void append(final GenericRecord object, final Appendable appendTo) throws IOException {
-        try (AppendableOutputStream bos = new AppendableOutputStream(appendTo, Charsets.UTF_8)) {
-            final Schema schema = object.getSchema();
-            GenericDatumWriter<GenericRecord> writer = new GenericDatumWriter<>(schema);
-            JsonEncoder jsonEncoder = SpecificRecordAppender.EF.jsonEncoder(schema, bos);
-            writer.write(object, jsonEncoder);
-            jsonEncoder.flush();
-        }
-    }
-    
+  @Override
+  public CoreTextMediaType getAppendedType() {
+    return CoreTextMediaType.TEXT_PLAIN;
+  }
 }

@@ -31,8 +31,8 @@
  */
 package org.spf4j.zel.vm;
 
-import com.google.common.base.Function;
 import java.util.Map;
+import java.util.function.Function;
 import org.spf4j.zel.instr.Instruction;
 import org.spf4j.zel.instr.LODAX;
 import org.spf4j.zel.instr.LODAXF;
@@ -75,7 +75,7 @@ public final class RefOptimizer implements Function<Program, Program> {
                     input.getGlobalMem(), input.getLocalSymbolTable(),
                     instructions, input.getDebug(), input.getSource(),
                     input.getType(), input.getExecType(),
-                    input.hasDeterministicFunctions());
+                    input.hasDeterministicFunctions(), input.getParameterNamesInternal());
     }
 
     private static Address getAddress(final Map<String, Integer> lsym,

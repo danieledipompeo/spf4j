@@ -31,21 +31,17 @@
  */
 package org.spf4j.io.appenders;
 
-import java.io.IOException;
-import org.apache.avro.specific.SpecificRecordBase;
-import org.spf4j.io.ObjectAppender;
+import org.spf4j.base.CoreTextMediaType;
+import org.spf4j.io.appenders.json.SpecificRecordBaseJsonAppender;
 
 /**
  *
- * @author zoly
+ * @author Zoltan Farkas
  */
-public final class SpecificRecordBaseAppender implements ObjectAppender<SpecificRecordBase> {
-  
-  private static final SpecificRecordAppender SA = new SpecificRecordAppender();
+public final class SpecificRecordBaseAppender extends SpecificRecordBaseJsonAppender {
 
   @Override
-  public void append(final SpecificRecordBase object, final Appendable appendTo) throws IOException {
-    SA.append(object, appendTo);
+  public CoreTextMediaType getAppendedType() {
+    return CoreTextMediaType.TEXT_PLAIN;
   }
-  
 }

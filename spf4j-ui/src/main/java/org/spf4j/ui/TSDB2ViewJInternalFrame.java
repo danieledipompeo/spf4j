@@ -31,7 +31,6 @@
  */
 package org.spf4j.ui;
 //CHECKSTYLE:OFF
-import com.google.common.collect.Multimap;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.awt.Dimension;
 import java.io.File;
@@ -55,8 +54,9 @@ import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
-import org.joda.time.DateTime;
 import org.spf4j.base.Pair;
+import org.spf4j.base.SuppressForbiden;
+import com.google.common.collect.Multimap;
 import org.spf4j.tsdb2.Charts;
 import org.spf4j.tsdb2.TSDBQuery;
 import org.spf4j.tsdb2.TSDBQuery.TableDefEx;
@@ -76,8 +76,10 @@ public class TSDB2ViewJInternalFrame extends javax.swing.JInternalFrame {
     /**
      * Creates new form TSDBViewJInternalFrame
      */
+    @SuppressForbiden
     public TSDB2ViewJInternalFrame(final File tsDb) throws IOException {
         super(tsDb.getPath());
+        setName(tsDb.getName());
         this.tsDb = tsDb;
         initComponents();
         Multimap<String, TableDefEx> columnsInfo = TSDBQuery.getAllTablesWithDataRanges(tsDb);
@@ -117,7 +119,7 @@ public class TSDB2ViewJInternalFrame extends javax.swing.JInternalFrame {
         }
         measurementTree.setModel(new DefaultTreeModel(root));
         measurementTree.setVisible(true);
-        this.startDate.setValue(new DateTime(startDateMillis).toDate());
+        this.startDate.setValue(new Date(startDateMillis));
     }
 
     /**

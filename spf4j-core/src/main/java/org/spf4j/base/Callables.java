@@ -31,11 +31,8 @@
  */
 package org.spf4j.base;
 
-import com.google.common.util.concurrent.UncheckedExecutionException;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.net.SocketException;
-import java.sql.SQLRecoverableException;
-import java.sql.SQLTransientException;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Callable;
@@ -44,10 +41,11 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Utility class for executing stuff with retry logic.
@@ -58,8 +56,10 @@ import org.slf4j.LoggerFactory;
 //CHECKSTYLE IGNORE RedundantThrows FOR NEXT 2000 LINES
 public final class Callables {
 
-  private static final Logger LOG = LoggerFactory.getLogger(Callables.class);
-
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static final SimpleRetryPredicate<?> RETRY_FOR_NULL_RESULT = new SimpleRetryPredicate<Object>() {
     @Override
     public SimpleAction apply(final Object input) {
@@ -71,27 +71,17 @@ public final class Callables {
    * A decent default retry predicate. It might retry exceptions that might not be retriable.. (like IO exceptions
    * thrown by parser libraries for parsing issues...)
    */
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static final AdvancedRetryPredicate<Exception> DEFAULT_EXCEPTION_RETRY
-          = new AdvancedRetryPredicate<Exception>() {
-    @Override
-    public AdvancedAction apply(@Nonnull final Exception input) {
-      Throwable rootCause = com.google.common.base.Throwables.getRootCause(input);
-      if (rootCause instanceof RuntimeException) {
-        return AdvancedAction.ABORT;
-      }
-      Throwable e = Throwables.firstCause(input,
-              (ex) -> (ex instanceof SQLTransientException
-              || ex instanceof SQLRecoverableException
-              || ex instanceof SocketException
-              || ex instanceof TimeoutException));
-      if (e != null) {
-        LOG.debug("Exception encountered, retrying...", input);
-        return AdvancedAction.RETRY;
-      }
-      return AdvancedAction.ABORT;
-    }
-  };
+          = new DefaultAdvancedRetryPredicateImpl();
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static final Predicate<Exception> DEFAULT_EXCEPTION_RETRY_PREDICATE
           = new Predicate<Exception>() {
 
@@ -105,6 +95,14 @@ public final class Callables {
 
   private Callables() { }
 
+
+
+
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(final TimeoutCallable<T, EX> what,
           final int nrImmediateRetries,
           final int maxRetryWaitMillis, final Class<EX> exceptionClass)
@@ -114,6 +112,11 @@ public final class Callables {
             DEFAULT_EXCEPTION_RETRY, exceptionClass);
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T> T executeWithRetry(final TimeoutCallable<T, RuntimeException> what,
           final int nrImmediateRetries, final int maxRetryWaitMillis)
           throws InterruptedException, TimeoutException {
@@ -123,7 +126,11 @@ public final class Callables {
   }
 
 
-
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(final TimeoutCallable<T, EX> what,
           final int nrImmediateRetries,
           final int maxRetryWaitMillis,
@@ -135,6 +142,11 @@ public final class Callables {
             retryOnException, exceptionClass);
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T> T executeWithRetry(final TimeoutCallable<T, RuntimeException> what,
           final int nrImmediateRetries, final int maxRetryWaitMillis,
           final AdvancedRetryPredicate<Exception> retryOnException)
@@ -158,7 +170,10 @@ public final class Callables {
    * @return the result of the callable.
    * @throws java.lang.InterruptedException - thrown if interrupted.
    * @throws EX - the exception declared to be thrown by the callable.
+   * @deprecated use RetryPolicy
    */
+  @Deprecated
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(final TimeoutCallable<T, EX> what,
           final int nrImmediateRetries, final int maxWaitMillis,
           final TimeoutRetryPredicate<? super T, T> retryOnReturnVal,
@@ -166,13 +181,17 @@ public final class Callables {
           final Class<EX> exceptionClass)
           throws InterruptedException, EX, TimeoutException {
     long deadline = what.getDeadline();
-    return executeWithRetry(what,  new TimeoutDelayPredicate2DelayPredicate<>(deadline, retryOnReturnVal),
+    return executeWithRetry(what,  new TimeoutRetryPredicate2RetryPredicate<>(deadline, retryOnReturnVal),
             new FibonacciBackoffRetryPredicate<>(retryOnException, nrImmediateRetries,
                     maxWaitMillis / 100, maxWaitMillis, Callables::rootClass, deadline,
                     () -> System.currentTimeMillis(), TimeUnit.MILLISECONDS),
     exceptionClass);
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   private static final class RetryData {
 
     private int immediateLeft;
@@ -211,11 +230,18 @@ public final class Callables {
 
   }
 
-
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static Class rootClass(final Exception f) {
     return com.google.common.base.Throwables.getRootCause(f).getClass();
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static final class FibonacciBackoffRetryPredicate<T, R> implements RetryPredicate<T, R> {
 
     private final IntMath.XorShift32 random;
@@ -276,8 +302,8 @@ public final class Callables {
     public RetryDecision<R> getDecision(final T value, final Callable<R> callable) {
       long currentTime = currTimeSuplier.getAsLong();
       if (currentTime > deadline) {
-        return RetryDecision.abort(new TimeoutException("Deadline " + deadline + ' ' + tu
-                + " passed, current time is " + currentTime + ' ' + tu));
+        return RetryDecision.abort(new TimeoutException("Deadline " + Instant.ofEpochMilli(deadline)
+                + " passed, current time is " + Instant.ofEpochMilli(currentTime)));
       }
       if (retryRegistry == null) {
         retryRegistry = new HashMap<>();
@@ -297,8 +323,9 @@ public final class Callables {
             delay = Math.abs(random.nextInt()) % delay;
           }
           if (currentTime + delay > deadline) {
-            return RetryDecision.abort(new TimeoutException("No time left for retry " + deadline + ' ' + tu
-                + " passed, current time is " + currentTime + ' ' + tu));
+            return RetryDecision.abort(new TimeoutException("No time left for retry "
+                    + Instant.ofEpochMilli(deadline) + ' ' + tu
+                + " passed, current time is " + Instant.ofEpochMilli(currentTime) + ' ' + tu));
           }
           return RetryDecision.retry(tu.toMillis(delay), callable);
         default:
@@ -309,16 +336,25 @@ public final class Callables {
 
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(final TimeoutCallable<T, EX> what,
           final TimeoutRetryPredicate<? super T, T> retryOnReturnVal,
           final TimeoutRetryPredicate<Exception, T> retryOnException, final Class<EX> exceptionClass)
           throws InterruptedException, EX, TimeoutException {
     final long deadline = what.getDeadline();
     return executeWithRetry(what,
-            new TimeoutDelayPredicate2DelayPredicate<>(deadline, retryOnReturnVal),
-            new TimeoutDelayPredicate2DelayPredicate<>(deadline, retryOnException), exceptionClass);
+            new TimeoutRetryPredicate2RetryPredicate<>(deadline, retryOnReturnVal),
+            new TimeoutRetryPredicate2RetryPredicate<>(deadline, retryOnException), exceptionClass);
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public abstract static class TimeoutCallable<T, EX extends Exception> implements CheckedCallable<T, EX> {
 
     private final long mdeadline;
@@ -349,6 +385,10 @@ public final class Callables {
 
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public enum AdvancedAction {
     RETRY, // Retry based on default policy. (can be immediate or delayed)
     RETRY_IMMEDIATE, // Do immediate retry
@@ -356,6 +396,10 @@ public final class Callables {
     ABORT // Abort, no retry, return last value/exception
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public interface AdvancedRetryPredicate<T> {
 
     default AdvancedAction apply(final T value, final long deadline) {
@@ -373,6 +417,10 @@ public final class Callables {
 
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public static final class RetryDecision<R> {
 
     private static final RetryDecision ABORT = new RetryDecision(Type.Abort, -1, null, null);
@@ -428,6 +476,10 @@ public final class Callables {
 
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public interface RetryPredicate<T, R> {
 
     /**
@@ -448,13 +500,22 @@ public final class Callables {
   }
 
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(final TimeoutCallable<T, EX> what,
           final TimeoutRetryPredicate<Exception, T> retryOnException, final Class<EX> exceptionClass)
           throws InterruptedException, EX, TimeoutException {
-    return (T) executeWithRetry(what, (TimeoutRetryPredicate<T, T>) TimeoutRetryPredicate.NORETRY_FOR_RESULT,
+    return executeWithRetry(what, (TimeoutRetryPredicate<T, T>) TimeoutRetryPredicate.NORETRY_FOR_RESULT,
             retryOnException, exceptionClass);
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public interface TimeoutRetryPredicate<T, R> {
 
     RetryDecision<R> getDecision(T value, long deadlineMillis, Callable<R> what);
@@ -470,14 +531,18 @@ public final class Callables {
 
   }
 
-  public static final class TimeoutDelayPredicate2DelayPredicate<T, R>
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
+  static final class TimeoutRetryPredicate2RetryPredicate<T, R>
           implements  RetryPredicate<T, R> {
 
     private final long deadline;
 
     private final TimeoutRetryPredicate<T, R> predicate;
 
-    public TimeoutDelayPredicate2DelayPredicate(final long deadline, final TimeoutRetryPredicate<T, R> predicate) {
+    TimeoutRetryPredicate2RetryPredicate(final long deadline, final TimeoutRetryPredicate<T, R> predicate) {
       this.deadline = deadline;
       this.predicate = predicate;
     }
@@ -511,10 +576,18 @@ public final class Callables {
 
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public enum SimpleAction {
     RETRY, ABORT
   }
 
+  /**
+   * @deprecated use RetryPolicy
+   */
+  @Deprecated
   public interface SimpleRetryPredicate<T> {
 
     SimpleAction apply(T value)
@@ -534,8 +607,11 @@ public final class Callables {
    * @return the result of the retried callable if successful.
    * @throws java.lang.InterruptedException - thrown if retry interrupted.
    * @throws EX - the exception thrown by callable.
+   * @deprecated use RetryPolicy
    */
+  @Deprecated
   @SuppressFBWarnings({ "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE", "MDM_THREAD_YIELD" })
+  @Nullable
   public static <T, EX extends Exception> T executeWithRetry(
           final CheckedCallable<T, EX> pwhat,
           final RetryPredicate<? super T, T> retryOnReturnVal,
@@ -561,7 +637,6 @@ public final class Callables {
             || (lastEx == null && (decision = retryOnReturnVal.getDecision(result, what)).getDecisionType()
                 == RetryDecision.Type.Retry)) {
       if (Thread.interrupted()) {
-        Thread.currentThread().interrupt();
         throw new InterruptedException();
       }
       long delayMillis = decision.getDelayMillis();
@@ -578,10 +653,9 @@ public final class Callables {
       } catch (Exception e) { // only EX and RuntimeException
         lastEx = e;
         if (lastExChain != null) {
-          lastExChain = Throwables.suppress(lastEx, lastExChain);
-        } else {
-          lastExChain = lastEx;
+          Throwables.suppressLimited(lastEx, lastExChain);
         }
+        lastExChain = lastEx;
       }
     }
     if (decision == null) {
@@ -592,10 +666,9 @@ public final class Callables {
         if (ex != null) {
           lastEx = ex;
           if (lastExChain != null) {
-            lastExChain = Throwables.suppress(lastEx, lastExChain);
-          } else {
-            lastExChain = lastEx;
+            Throwables.suppressLimited(lastEx, lastExChain);
           }
+          lastExChain = lastEx;
         }
     }
     if (lastEx != null) {
@@ -650,7 +723,7 @@ public final class Callables {
     };
   }
 
-  public static long overflowSafeAdd(final long currentTime, final long timeout) {
+  static long overflowSafeAdd(final long currentTime, final long timeout) {
     if (currentTime < 0) {
       throw new IllegalArgumentException("Time must be positive, not " + currentTime);
     }
@@ -664,5 +737,55 @@ public final class Callables {
       return Long.MAX_VALUE;
     }
   }
+
+  public static <V> MemorizedCallable<V> memorized(final Callable<V> source) {
+    return new MemorizedCallable<>(source);
+  }
+
+  public static <V> Callable<V> constant(final V value) {
+    return new ConstCallable(value);
+  }
+
+  public static Callable<Void> from(final Runnable value) {
+    return () -> {
+      value.run();
+      return null;
+    };
+  }
+
+  private static final class ConstCallable<V> implements Callable<V> {
+
+    private final V value;
+
+    ConstCallable(final V value) {
+      this.value = value;
+    }
+
+    @Override
+    public V call() {
+      return value;
+    }
+
+    @Override
+    public String toString() {
+      return "ConstCallable{" + value + '}';
+    }
+  }
+
+  @Deprecated
+  private static final class DefaultAdvancedRetryPredicateImpl implements AdvancedRetryPredicate<Exception> {
+
+    @Override
+    public AdvancedAction apply(@Nonnull final Exception input) {
+      if (Throwables.isRetryable(input)) {
+        Logger.getLogger(DefaultAdvancedRetryPredicateImpl.class.getName())
+                .log(Level.FINE, "Exception encountered, retrying...", input);
+        return AdvancedAction.RETRY;
+      }
+      return AdvancedAction.ABORT;
+    }
+  }
+
+
 
 }

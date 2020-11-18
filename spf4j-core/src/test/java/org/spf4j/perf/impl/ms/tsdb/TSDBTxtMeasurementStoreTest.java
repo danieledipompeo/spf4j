@@ -31,9 +31,9 @@
  */
 package org.spf4j.perf.impl.ms.tsdb;
 
-import com.google.common.base.Charsets;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -41,13 +41,17 @@ import java.util.stream.Collectors;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.perf.impl.MeasurementsInfoImpl;
+import org.spf4j.tsdb2.avro.MeasurementType;
 
 /**
  * @author zoly
  */
 public class TSDBTxtMeasurementStoreTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(TSDBTxtMeasurementStoreTest.class);
 
   @Test
   public void testCreateAppend() throws IOException {
@@ -55,16 +59,16 @@ public class TSDBTxtMeasurementStoreTest {
     File file = tmpFile.toFile();
     TSDBTxtMeasurementStore store = new TSDBTxtMeasurementStore(file);
     long id = store.alocateMeasurements(new MeasurementsInfoImpl("test", "bla",
-            new String[] {"a", "b"}, new String [] {"ms", "ms"}), 10000);
+            new String[]{"a", "b"}, new String[]{"ms", "ms"}, MeasurementType.GAUGE), 10000);
     store.saveMeasurements(id, System.currentTimeMillis(), 3L, 4L);
     store.close();
-    String content = Files.lines(tmpFile, Charsets.UTF_8).collect(Collectors.joining("\n"));
-    System.out.println(content);
+    String content = Files.lines(tmpFile, StandardCharsets.UTF_8).collect(Collectors.joining("\n"));
+    LOG.debug("File Content: {}", content);
     Assert.assertThat(content, Matchers.containsString("a,3,b,4"));
     TSDBTxtMeasurementStore store2 = new TSDBTxtMeasurementStore(file);
     store2.saveMeasurements(id, System.currentTimeMillis(), 5L, 6L);
     store2.close();
-    content = Files.lines(tmpFile, Charsets.UTF_8).collect(Collectors.joining("\n"));
+    content = Files.lines(tmpFile, StandardCharsets.UTF_8).collect(Collectors.joining("\n"));
     Assert.assertThat(content, Matchers.containsString("a,3,b,4"));
     Assert.assertThat(content, Matchers.containsString("a,5,b,6"));
   }

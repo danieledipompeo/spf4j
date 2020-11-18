@@ -34,9 +34,17 @@ package org.spf4j.io;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.base.AbstractRunnable;
+import org.spf4j.base.ExecutionContext;
+import org.spf4j.base.ExecutionContexts;
 import org.spf4j.base.IntMath;
 import org.spf4j.base.Strings;
 import org.spf4j.concurrent.DefaultExecutor;
@@ -47,94 +55,134 @@ import org.spf4j.concurrent.DefaultExecutor;
  */
 public class PipedOutputStreamTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(PipedOutputStreamTest.class);
 
-    @Test
-    public void testStreamPiping() throws IOException {
-        test("This is a super cool, mega dupper test string for testing piping..........E", 8, false);
-        final IntMath.XorShift32 random = new IntMath.XorShift32();
-        for (int i = 0; i < 100; i++) {
-            int nrChars = Math.abs(random.nextInt() % 100000);
-            StringBuilder sb = generateTestStr(nrChars);
-            test(sb.toString(), Math.abs(random.nextInt() % 10000) + 2, false);
-        }
-        test(generateTestStr(133).toString(), 2, false);
+  @Test
+  public void testStreamPiping() throws IOException {
+    test("This is a super cool, mega dupper test string for testing piping..........E", 8, false);
+    final IntMath.XorShift32 random = new IntMath.XorShift32();
+    for (int i = 0; i < 100; i++) {
+      int nrChars = Math.abs(random.nextInt() % 100000);
+      StringBuilder sb = generateTestStr(nrChars);
+      test(sb.toString(), Math.abs(random.nextInt() % 10000) + 2, false);
+    }
+    test(generateTestStr(133).toString(), 2, false);
+  }
+
+  public static StringBuilder generateTestStr(final int nrChars) {
+    final IntMath.XorShift32 random = new IntMath.XorShift32();
+    StringBuilder sb = new StringBuilder(nrChars);
+    for (int i = 0; i < nrChars; i++) {
+      sb.append((char) Math.abs(random.nextInt() % 100) + 20);
+    }
+    return sb;
+  }
+
+  public static void test(final String testStr, final int buffSize, final boolean buffered) throws IOException {
+    final PipedOutputStream pos = new PipedOutputStream(buffSize);
+    final InputStream pis;
+    if (buffered) {
+      pis = new MemorizingBufferedInputStream(pos.getInputStream());
+    } else {
+      pis = pos.getInputStream();
     }
 
-    public static StringBuilder generateTestStr(int nrChars) {
-        final IntMath.XorShift32 random = new IntMath.XorShift32();
-        StringBuilder sb = new StringBuilder(nrChars);
-        for (int i = 0; i < nrChars; i++) {
-            sb.append((char) Math.abs(random.nextInt() % 100) + 20);
+    DefaultExecutor.INSTANCE.execute(new AbstractRunnable() {
+
+      @Override
+      public void doRun() throws Exception {
+        try (OutputStream os = pos) {
+          final byte[] utf8 = Strings.toUtf8(testStr);
+          os.write(utf8[0]);
+          os.write(utf8, 1,  utf8.length - 1);
         }
-        return sb;
+      }
+    });
+    StringBuilder sb = new StringBuilder();
+    try (InputStream is = pis) {
+      byte[] buffer = new byte[1024];
+      int read;
+      while ((read = is.read(buffer)) > 0) {
+        sb.append(Strings.fromUtf8(buffer, 0, read));
+      }
     }
+    Assert.assertEquals("buffSize = " + buffSize + ", buffered = " + buffered, testStr, sb.toString());
+  }
 
-    public static void test(final String testStr, final int buffSize, final boolean buffered) throws IOException {
-        final PipedOutputStream pos = new PipedOutputStream(buffSize);
-        final InputStream pis;
-        if (buffered) {
-            pis = new MemorizingBufferedInputStream(pos.getInputStream());
-        } else {
-            pis = pos.getInputStream();
-        }
-
-        DefaultExecutor.INSTANCE.execute(new AbstractRunnable() {
-
-            @Override
-            public void doRun() throws Exception {
-                try (OutputStream os = pos) {
-                    final byte[] utf8 = Strings.toUtf8(testStr);
-                    os.write(utf8[0]);
-                    os.write(utf8, 1, 10);
-                    os.write(utf8, 11, utf8.length - 11);
-                }
-            }
-        });
-        StringBuilder sb = new StringBuilder();
-        try (InputStream is = pis) {
-            byte [] buffer  = new byte[1024];
-            int read;
-            while((read = is.read(buffer)) > 0) {
-                sb.append(Strings.fromUtf8(buffer, 0, read));
-            }
-        }
-        Assert.assertEquals(testStr, sb.toString());
-    }
-
-    @Test(expected = IOException.class)
-    public void testNoReaderBehaviour() throws IOException {
-        PipedOutputStream os = new PipedOutputStream(1024);
-        try(final PipedOutputStream pos = os) {
-            pos.write(123);
-        } catch(IOException ex) {
-           throw new IOException("Stream=" + os, ex);
-        }
-    }
-
-    @Test(expected = IOException.class)
-    public void testNoReaderBehaviourP() throws IOException {
-        PipedOutputStream pos = new PipedOutputStream(1024);
-        try {
-            pos.write(123);
-        } catch(IOException ex) {
-           throw new IOException("Stream=" + pos, ex);
-        } finally {
-            pos.close();
-        }
-    }
-
-    @Test(expected = IOException.class)
-    public void testNoReaderBehaviour2() throws IOException {
-        try (final PipedOutputStream pos = new PipedOutputStream(1024)) {
-          try (InputStream is = pos.getInputStream()) {
-              pos.write(123);
-              pos.flush();
-              int val = is.read();
-              Assert.assertEquals(123, val);
+  @Test
+  public void testNoReaderBehaviour() throws IOException, InterruptedException,
+          ExecutionException, TimeoutException {
+    PipedOutputStream os = new PipedOutputStream(1024);
+    Future<Integer> nr;
+    int j = 0;
+    try (PipedOutputStream pos = os) {
+      pos.write(123);
+      LOG.debug("write {}", j);
+      j++;
+      nr = DefaultExecutor.instance().submit(() -> {
+        try (InputStream is = pos.getInputStream()) {
+          int i = 0;
+          int val;
+          while ((val = is.read()) >= 0) {
+            Assert.assertEquals(123, val);
+            LOG.debug("read {}", i);
+            i++;
           }
+          return i;
+        }
+      });
+      for (; j < 2000; j++) {
+        pos.write(123);
+        LOG.debug("write {}", j);
+      }
+    }
+    LOG.debug("os = {}", os);
+    Assert.assertEquals(j, nr.get(3, TimeUnit.SECONDS).intValue());
+  }
+
+
+
+  @Test
+  public void testNoReaderBehaviour2() throws IOException {
+    try (PipedOutputStream pos = new PipedOutputStream(1024)) {
+      try (InputStream is = pos.getInputStream()) {
+        pos.write(123);
+        pos.flush();
+        int val = is.read();
+        Assert.assertEquals(123, val);
+      }
+      pos.write(123);
+    }
+  }
+
+  @Test(timeout = 2000, expected = IOTimeoutException.class)
+  public void testNoReaderTimeout() throws IOException {
+    try (ExecutionContext ctx = ExecutionContexts.start("tt", 1, TimeUnit.MILLISECONDS);
+            PipedOutputStream pos = new PipedOutputStream(10)) {
+      try (InputStream is = pos.getInputStream()) {
+        for (int i = 0; i < 11; i++) {
           pos.write(123);
         }
+      }
     }
+  }
 
+  @Test
+  public void testCloseWithReason() throws IOException {
+    try (PipedOutputStream pos = new PipedOutputStream(10)) {
+      pos.write(123);
+      IOException ex = new IOException();
+      pos.close(ex);
+      try {
+        pos.write(123);
+        Assert.fail();
+      } catch (IOException ex2) {
+        Assert.assertEquals(ex, ex2.getCause());
+      }
+      try (InputStream is = pos.getInputStream()) {
+        Assert.assertEquals(123, is.read());
+      }
+    }
+  }
 
 }

@@ -34,12 +34,16 @@ package org.spf4j.perf.impl.ms;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URISyntaxException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import org.spf4j.jmx.Registry;
 import org.spf4j.perf.MeasurementStore;
 import org.spf4j.perf.impl.NopMeasurementStore;
 import org.spf4j.perf.impl.ms.graphite.GraphiteTcpStore;
 import org.spf4j.perf.impl.ms.graphite.GraphiteUdpStore;
+import org.spf4j.perf.impl.ms.tsdb.AvroMeasurementStore;
 import org.spf4j.perf.impl.ms.tsdb.TSDBMeasurementStore;
 import org.spf4j.perf.impl.ms.tsdb.TSDBTxtMeasurementStore;
 import org.spf4j.recyclable.ObjectCreationException;
@@ -60,6 +64,22 @@ public enum StoreType {
                 config = pconfig;
             }
             return new TSDBMeasurementStore(new File(config));
+        }
+    }),
+    TSDB_AVRO(new StoreFactory() {
+        @Override
+        @SuppressFBWarnings("PATH_TRAVERSAL_IN") // not supplied by user
+        public MeasurementStore create(final String pconfig) throws IOException {
+          Path path = Paths.get(pconfig);
+          Path parent = path.getParent();
+          if (parent == null) {
+            throw new IllegalArgumentException("Invalid store config " + pconfig);
+          }
+          Path fileName = path.getFileName();
+          if (fileName == null) {
+            throw new IllegalArgumentException("Invalid store config " + pconfig);
+          }
+          return new AvroMeasurementStore(parent, fileName.toString());
         }
     }),
     TSDB_TXT(new StoreFactory() {
@@ -95,18 +115,66 @@ public enum StoreType {
         public MeasurementStore create(final String config) {
             return new NopMeasurementStore();
         }
+    }),
+    CUSTOM(new StoreFactory() {
+
+        @Override
+        public MeasurementStore create(final String config) {
+          try {
+            return (MeasurementStore) Class.forName(config).getConstructor().newInstance();
+          } catch (ClassNotFoundException | NoSuchMethodException
+                  | SecurityException | InstantiationException | IllegalAccessException
+                  | InvocationTargetException ex) {
+           throw new RuntimeException(ex);
+          }
+        }
+    }),
+    WRAPPER(new StoreFactory() {
+
+        @Override
+        public MeasurementStore create(final String config) throws IOException, ObjectCreationException {
+          int fp = config.indexOf('(');
+          int lp = config.lastIndexOf(')');
+          if (fp < 0 || lp < 0 || lp < fp) {
+            throw new IllegalArgumentException("Invalid wrapper config: " + config);
+          }
+          String className = config.substring(0, fp);
+          MeasurementStore ms = fromString(config.substring(fp + 1, lp));
+          try {
+            return (MeasurementStore) Class.forName(className).getConstructor(MeasurementStore.class).newInstance(ms);
+          } catch (ClassNotFoundException | NoSuchMethodException | SecurityException
+                  | InstantiationException | IllegalAccessException | InvocationTargetException ex) {
+            throw new RuntimeException(ex);
+          }
+        }
     });
+
     private final StoreFactory factory;
 
     StoreType(final StoreFactory factory) {
         this.factory = factory;
     }
 
-    public MeasurementStore create(final String configuration) throws IOException, ObjectCreationException {
+    private MeasurementStore create(final String configuration) throws IOException, ObjectCreationException {
         MeasurementStore store =  factory.create(configuration);
-        Registry.export(store.getClass().getName(),
+        Registry.exportIfNeeded(store.getClass().getName(),
                     store.toString(), store);
         return store;
     }
+
+
+  public static MeasurementStore fromString(final String string) throws IOException, ObjectCreationException {
+    int atIdx = string.indexOf('@');
+    final int length = string.length();
+    if (atIdx < 0) {
+      atIdx = length;
+    }
+    StoreType type = StoreType.valueOf(string.substring(0, atIdx));
+    if (atIdx >= length) {
+      return type.create("");
+    } else {
+      return type.create(string.substring(atIdx + 1));
+    }
+  }
 
 }

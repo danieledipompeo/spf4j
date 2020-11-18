@@ -31,60 +31,133 @@
  */
 package org.spf4j.zel.instr;
 
+import java.lang.reflect.Type;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import org.apache.avro.generic.GenericRecord;
+import org.spf4j.reflect.CachingTypeMapWrapper;
+import org.spf4j.reflect.GraphTypeMap;
 import org.spf4j.zel.vm.ExecutionContext;
 import org.spf4j.zel.vm.JavaMethodCall;
 import org.spf4j.zel.vm.SuspendedException;
 
-
 public final class DEREF extends Instruction {
 
-    private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 1L;
 
-    public static final Instruction INSTANCE = new DEREF();
+  public static final Instruction INSTANCE = new DEREF();
 
-    private DEREF() {
-    }
+  private static final CachingTypeMapWrapper<ReferenceHandler> TYPE_HANDLER
+          = new CachingTypeMapWrapper<>(new GraphTypeMap());
 
-    @Override
-    public int execute(final ExecutionContext context)
-            throws ExecutionException, SuspendedException {
-       final Object[] vals = context.tuple();
-       context.popSyncStackVals(vals);
-       pushDeref(vals[0], vals[1], context);
-       return 1;
-    }
-
-    static void pushDeref(final Object relativeTo, final Object ref, final ExecutionContext context) {
-        if (relativeTo instanceof Map) {
-            context.push(((Map) relativeTo).get(ref));
-        } else if (relativeTo instanceof Object[]) {
-            if ("length".equals(ref)) {
+  static {
+    TYPE_HANDLER.safePut(Map.class,
+            (Object relativeTo, Object ref, ExecutionContext context)
+            -> context.push(((Map) relativeTo).get(ref)))
+            .safePut(GenericRecord.class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> context.push(((GenericRecord) relativeTo).get(ref.toString())))
+            .safePut(Object.class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> context.push(new JavaMethodCall(relativeTo, (String) ref)))
+            .safePut(Object[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
                 context.push(((Object[]) relativeTo).length);
-            } else {
+              } else {
                 context.push(((Object[]) relativeTo)[((Number) ref).intValue()]);
-            }
-        } else if (relativeTo instanceof int[]) {
-            context.push(((int[]) relativeTo)[((Number) ref).intValue()]);
-        } else if (relativeTo instanceof byte[]) {
-            context.push(((byte[]) relativeTo)[((Number) ref).intValue()]);
-        } else if (relativeTo instanceof char[]) {
-            context.push(((char[]) relativeTo)[((Number) ref).intValue()]);
-        } else if (relativeTo instanceof long[]) {
-            context.push(((long[]) relativeTo)[((Number) ref).intValue()]);
-        } else if (relativeTo instanceof short[]) {
-            context.push(((short[]) relativeTo)[((Number) ref).intValue()]);
-        } else if (relativeTo instanceof List) {
-            context.push(((List) relativeTo).get(((Number) ref).intValue()));
-        } else {
-            context.push(new JavaMethodCall(relativeTo, (String) ref));
-        }
-    }
+              }
+            })
+            .safePut(int[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((int[]) relativeTo).length);
+              } else {
+                context.push(((int[]) relativeTo)[((Number) ref).intValue()]);
+              }
+            })
+            .safePut(byte[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((byte[]) relativeTo).length);
+              } else {
+                context.push(((byte[]) relativeTo)[((Number) ref).intValue()]);
+              }
+            })
+            .safePut(char[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((char[]) relativeTo).length);
+              } else {
+                context.push(((char[]) relativeTo)[((Number) ref).intValue()]);
+              }
+            })
+            .safePut(long[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((long[]) relativeTo).length);
+              } else {
+                context.push(((long[]) relativeTo)[((Number) ref).intValue()]);
+              }
+            })
+            .safePut(short[].class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((short[]) relativeTo).length);
+              } else {
+                context.push(((short[]) relativeTo)[((Number) ref).intValue()]);
+              }
+            })
+            .safePut(List.class,
+                    (Object relativeTo, Object ref, ExecutionContext context)
+                    -> {
+              if ("length".equals(ref)) {
+                context.push(((List) relativeTo).size());
+              } else {
+                context.push(((List) relativeTo).get(((Number) ref).intValue()));
+              }
+            });
+  }
 
-    @Override
-    public Object[] getParameters() {
-        return org.spf4j.base.Arrays.EMPTY_OBJ_ARRAY;
-    }
+  interface ReferenceHandler {
+
+    void pushDeref(Object relativeTo, Object ref, ExecutionContext context);
+  }
+
+  private DEREF() {
+  }
+
+  public static void registerTypeDerefHandler(final Type type, final ReferenceHandler refHandler) {
+    TYPE_HANDLER.safePut(type, refHandler);
+  }
+
+  public static synchronized void replaceTypeDerefHandler(final Type type, final ReferenceHandler refHandler) {
+    TYPE_HANDLER.replace(type, (x) -> refHandler);
+  }
+
+  @Override
+  public int execute(final ExecutionContext context)
+          throws ExecutionException, SuspendedException {
+    final Object[] vals = context.tuple();
+    context.popSyncStackVals(vals);
+    pushDeref(vals[0], vals[1], context);
+    return 1;
+  }
+
+  static void pushDeref(final Object relativeTo, final Object ref, final ExecutionContext context) {
+    ReferenceHandler rh = TYPE_HANDLER.get(relativeTo.getClass());
+    rh.pushDeref(relativeTo, ref, context);
+  }
+
+  @Override
+  public Object[] getParameters() {
+    return org.spf4j.base.Arrays.EMPTY_OBJ_ARRAY;
+  }
 }

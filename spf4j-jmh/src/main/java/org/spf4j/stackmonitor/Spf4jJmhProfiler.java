@@ -34,10 +34,12 @@ package org.spf4j.stackmonitor;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import org.openjdk.jmh.infra.BenchmarkParams;
 import org.openjdk.jmh.infra.IterationParams;
@@ -54,7 +56,7 @@ import org.spf4j.ssdump2.Converter;
 
 /**
  * Improved implementation of the spf4j profiler to get extra profiling
- * data granularity to be able to corelate to iteration number.
+ * data granularity to be able to correlate to iteration number.
  *
  * @author zoly
  */
@@ -69,7 +71,7 @@ public final class Spf4jJmhProfiler implements InternalProfiler {
   private static final String DUMP_FOLDER = System.getProperty("jmh.stack.profiles", org.spf4j.base.Runtime.USER_DIR);
 
   private static final Sampler SAMPLER = new Sampler(SAMPLE_PERIOD_MSEC, Integer.MAX_VALUE,
-          new FastStackCollector(true));
+          (t) -> new FastStackCollector(false, true, new Thread[] {t}));
 
   private static final AtomicInteger MEASUREMENT_ITERATION_COUNTER = new AtomicInteger(1);
 
@@ -93,15 +95,22 @@ public final class Spf4jJmhProfiler implements InternalProfiler {
   }
 
   @Override
+  @Nonnull
   public Collection<? extends Result> afterIteration(final BenchmarkParams benchmarkParams,
           final IterationParams iterationParams, final IterationResult ir) {
     try {
       SAMPLER.stop();
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
-      return null;
+      return Collections.EMPTY_LIST;
     }
-    SampleNode collected = SAMPLER.getStackCollector().clear();
+    Map<String, SampleNode> c = SAMPLER.getStackCollectionsAndReset();
+    SampleNode collected;
+    if (c.isEmpty()) {
+      collected = null;
+    } else {
+      collected = c.values().iterator().next();
+    }
     String iterationId;
     IterationType itType = iterationParams.getType();
     switch (itType) {
@@ -114,7 +123,7 @@ public final class Spf4jJmhProfiler implements InternalProfiler {
       default:
         throw new IllegalStateException("Unknown type of iteration " + itType);
     }
-    return Arrays.asList(new StackResult(collected, benchmarkParams.id(), iterationId));
+    return Collections.singletonList(new StackResult(collected, benchmarkParams.id(), iterationId));
   }
 
   @Override
@@ -153,6 +162,7 @@ public final class Spf4jJmhProfiler implements InternalProfiler {
       return id;
     }
 
+    @Nullable
     public SampleNode getSamples() throws IOException {
       if (this.perfDataFile == null) {
         return null;

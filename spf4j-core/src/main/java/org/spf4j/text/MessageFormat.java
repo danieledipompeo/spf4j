@@ -74,7 +74,6 @@ import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.NotThreadSafe;
 import org.spf4j.base.CharSequences;
-import org.spf4j.base.Strings;
 
 /**
  * Performance mutation of the JDK message formatter.
@@ -188,30 +187,37 @@ import org.spf4j.base.Strings;
  * <td headers="sc">{@link NumberFormat#getIntegerInstance(Locale) NumberFormat.getIntegerInstance}{@code (getLocale())}
  * <tr>
  * <td headers="fs"><code>currency</code>
- * <td headers="sc">{@link NumberFormat#getCurrencyInstance(Locale) NumberFormat.getCurrencyInstance}{@code (getLocale())}
+ * <td headers="sc">{@link NumberFormat#getCurrencyInstance(Locale) NumberFormat.getCurrencyInstance}
+ * {@code (getLocale())}
  * <tr>
  * <td headers="fs"><code>percent</code>
  * <td headers="sc">{@link NumberFormat#getPercentInstance(Locale) NumberFormat.getPercentInstance}{@code (getLocale())}
  * <tr>
  * <td headers="fs"><i>SubformatPattern</i>
  * <td headers="sc">{@code new}
- * {@link DecimalFormat#DecimalFormat(String,DecimalFormatSymbols) DecimalFormat}{@code (subformatPattern,} {@link DecimalFormatSymbols#getInstance(Locale) DecimalFormatSymbols.getInstance}{@code (getLocale()))}
+ * {@link DecimalFormat#DecimalFormat(String,DecimalFormatSymbols) DecimalFormat}{@code (subformatPattern,}
+ * {@link DecimalFormatSymbols#getInstance(Locale) DecimalFormatSymbols.getInstance}{@code (getLocale()))}
  * <tr>
  * <td headers="ft" rowspan=6><code>date</code>
  * <td headers="fs"><i>(none)</i>
- * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}{@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}
+ * {@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>short</code>
- * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}{@code (}{@link DateFormat#SHORT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}
+ * {@code (}{@link DateFormat#SHORT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>medium</code>
- * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}{@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}
+ * {@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>long</code>
- * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}{@code (}{@link DateFormat#LONG}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}
+ * {@code (}{@link DateFormat#LONG}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>full</code>
- * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}{@code (}{@link DateFormat#FULL}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getDateInstance(int,Locale) DateFormat.getDateInstance}
+ * {@code (}{@link DateFormat#FULL}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><i>SubformatPattern</i>
  * <td headers="sc">{@code new}
@@ -219,19 +225,24 @@ import org.spf4j.base.Strings;
  * <tr>
  * <td headers="ft" rowspan=6><code>time</code>
  * <td headers="fs"><i>(none)</i>
- * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}{@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}
+ * {@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>short</code>
- * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}{@code (}{@link DateFormat#SHORT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}
+ * {@code (}{@link DateFormat#SHORT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>medium</code>
- * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}{@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}
+ * {@code (}{@link DateFormat#DEFAULT}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>long</code>
- * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}{@code (}{@link DateFormat#LONG}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}
+ * {@code (}{@link DateFormat#LONG}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><code>full</code>
- * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}{@code (}{@link DateFormat#FULL}{@code , getLocale())}
+ * <td headers="sc">{@link DateFormat#getTimeInstance(int,Locale) DateFormat.getTimeInstance}
+ * {@code (}{@link DateFormat#FULL}{@code , getLocale())}
  * <tr>
  * <td headers="fs"><i>SubformatPattern</i>
  * <td headers="sc">{@code new}
@@ -874,19 +885,20 @@ public final class MessageFormat extends Format {
    * @exception IllegalArgumentException if an argument in the <code>arguments</code> array is not of the type expected
    * by the format element(s) that use it.
    */
-  public final <T extends CharSequence & Appendable> T format(Object[] arguments, T result,
+  public final <T extends CharSequence & Appendable> boolean[] format(Object[] arguments, T result,
           @Nullable FieldPosition pos) throws IOException {
     return subformat(arguments, result, pos, null);
   }
 
-  public final <T extends CharSequence & Appendable> T format(Object[] arguments, T result) throws IOException {
+  public final <T extends CharSequence & Appendable> boolean[] format(Object[] arguments, T result) throws IOException {
     return format(arguments, result, null);
   }
 
   /**
    * Creates a MessageFormat with the given pattern and uses it to format the given arguments. This is equivalent to
    * <blockquote>
-   * <code>(new {@link #MessageFormat(String) MessageFormat}(pattern)).{@link #format(java.lang.Object[], java.lang.StringBuffer, java.text.FieldPosition) format}(arguments,
+   * <code>(new {@link #MessageFormat(String) MessageFormat}(pattern)).
+   * {@link #format(java.lang.Object[], java.lang.StringBuffer, java.text.FieldPosition) format}(arguments,
    * new StringBuffer(), null).toString()</code>
    * </blockquote>
    *
@@ -916,7 +928,7 @@ public final class MessageFormat extends Format {
    * @exception IllegalArgumentException if an argument in the <code>arguments</code> array is not of the type expected
    * by the format element(s) that use it.
    */
-  public final <T extends CharSequence & Appendable> T format(Object arguments, T result,
+  public final <T extends CharSequence & Appendable> boolean[] format(Object arguments, T result,
           FieldPosition pos) throws IOException {
     if (arguments instanceof Object[]) {
       return subformat((Object[]) arguments, result, pos, null);
@@ -1019,7 +1031,7 @@ public final class MessageFormat extends Format {
       // match up to format
       FormatInfo finfo = formats[i];
       int len = finfo.getOffset() - patternOffset;
-      if (len == 0 || Strings.regionMatches(pattern, patternOffset, source, sourceOffset, len)) {
+      if (len == 0 || CharSequences.regionMatches(pattern, patternOffset, source, sourceOffset, len)) {
         sourceOffset += len;
         patternOffset += len;
       } else {
@@ -1063,7 +1075,7 @@ public final class MessageFormat extends Format {
       }
     }
     int len = pattern.length() - patternOffset;
-    if (len == 0 || Strings.regionMatches(pattern, patternOffset, source, sourceOffset, len)) {
+    if (len == 0 || CharSequences.regionMatches(pattern, patternOffset, source, sourceOffset, len)) {
       pos.setIndex(sourceOffset + len);
     } else {
       pos.setErrorIndex(sourceOffset);
@@ -1082,7 +1094,7 @@ public final class MessageFormat extends Format {
    * @return An <code>Object</code> array parsed from the string.
    * @exception ParseException if the beginning of the specified string cannot be parsed.
    */
-  @Nonnull
+  @Nullable
   public Object[] parse(String source) throws ParseException {
     ParsePosition pos = new ParsePosition(0);
     Object[] result = parse(source, pos);
@@ -1111,7 +1123,7 @@ public final class MessageFormat extends Format {
    * @return An <code>Object</code> array parsed from the string. In case of error, returns null.
    * @exception NullPointerException if <code>pos</code> is null.
    */
-  @Nonnull
+  @Nullable
   public Object parseObject(String source, ParsePosition pos) {
     return parse(source, pos);
   }
@@ -1148,7 +1160,7 @@ public final class MessageFormat extends Format {
     }
     MessageFormat other = (MessageFormat) obj;
     return (maxOffset == other.maxOffset
-            && Strings.equals(pattern, other.pattern)
+            && CharSequences.equals(pattern, other.pattern)
             && ((locale != null && locale.equals(other.locale))
             || (locale == null && other.locale == null))
             && Arrays.equals(formats, other.formats));
@@ -1169,13 +1181,14 @@ public final class MessageFormat extends Format {
   @Override
   public StringBuffer format(Object obj, StringBuffer toAppendTo, FieldPosition pos) {
     try {
-      return syntethicFormat(obj, toAppendTo, pos);
+      syntethicFormat(obj, toAppendTo, pos);
+      return toAppendTo;
     } catch (IOException ex) {
       throw new UncheckedIOException(ex);
     }
   }
 
-  private <T extends CharSequence & Appendable> T syntethicFormat(Object obj, T toAppendTo, FieldPosition pos)
+  private <T extends CharSequence & Appendable> boolean[] syntethicFormat(Object obj, T toAppendTo, FieldPosition pos)
           throws IOException {
     return format(obj, toAppendTo, pos);
   }
@@ -1190,14 +1203,20 @@ public final class MessageFormat extends Format {
    * @exception IllegalArgumentException if an argument in the <code>arguments</code> array is not of the type expected
    * by the format element(s) that use it.
    */
-  @SuppressFBWarnings({"PDP_POORLY_DEFINED_PARAMETER", "PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"}) // Unfortunately I have no other way to write this
+  @SuppressFBWarnings({"PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS"}) // Unfortunately I have no other way to write this
   // without code duplication to work for StringBuilder and StringBuffer....
-   private <T extends Appendable & CharSequence> T subformat(@Nullable Object[] arguments, @Nonnull T result,
+  private <T extends Appendable & CharSequence> boolean[] subformat(@Nullable Object[] arguments, @Nonnull T result,
           @Nullable FieldPosition fp,
           @Nullable List<AttributedCharacterIterator> characterIterators)
           throws IOException {
     int lastOffset = 0;
     int last = result.length();
+    boolean[] used;
+    if (arguments == null)  {
+      used = org.spf4j.base.Arrays.EMPTY_BOOLEAN_ARRAY;
+    } else {
+      used = new boolean[arguments.length];
+    }
     for (int i = 0; i <= maxOffset; ++i) {
       FormatInfo finfo = formats[i];
       int offset = finfo.getOffset();
@@ -1208,6 +1227,7 @@ public final class MessageFormat extends Format {
         result.append('{').append(Integer.toString(argumentNumber)).append('}');
         continue;
       }
+      used[argumentNumber] = true;
       Object obj = arguments[argumentNumber];
       String arg = null;
       Format subFormatter = null;
@@ -1292,7 +1312,7 @@ public final class MessageFormat extends Format {
     if (characterIterators != null && last != result.length()) {
       characterIterators.add(createAttributedCharacterIterator(result.subSequence(last, result.length()).toString()));
     }
-    return result;
+    return used;
   }
 
   /**
@@ -1425,10 +1445,10 @@ public final class MessageFormat extends Format {
     }
 
     // Try trimmed lowercase.
-    String ls = s.trim().toLowerCase(Locale.ROOT);
+    String ls = s.trim();
     if (ls != s) {
       for (int i = 0; i < list.length; ++i) {
-        if (ls.equals(list[i])) {
+        if (ls.equalsIgnoreCase(list[i])) {
           return i;
         }
       }

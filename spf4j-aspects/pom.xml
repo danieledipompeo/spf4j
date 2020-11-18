@@ -19,20 +19,21 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>org.spf4j</groupId>
   <artifactId>spf4j-aspects</artifactId>
   <packaging>jar</packaging>
   <parent>
     <groupId>org.spf4j</groupId>
     <artifactId>spf4j</artifactId>
-    <version>8.3.14-SNAPSHOT</version>
+    <version>8.8.6-SNAPSHOT</version>
   </parent>
   <name>${project.artifactId}</name>
   <description>spf4j aspects for monitoring performance and retry</description>
 
   <properties>
-    <jacoco.instruction.ratio>0.3</jacoco.instruction.ratio>
-    <argLine>-Djava.io.tmpdir=./target -javaagent:${project.build.directory}/lib/aspectjweaver-${aspectj.version}.jar -javaagent:${project.build.directory}/lib/spf4j-core-${project.version}.jar</argLine>
+    <jacoco.instruction.ratio>0.2</jacoco.instruction.ratio>
+    <jacoco.class.ratio>0.3</jacoco.class.ratio>
+    <jacoco.method.ratio>0.3</jacoco.method.ratio>
+    <argLine>-javaagent:${project.build.directory}/lib/aspectjweaver-${aspectj.version}.jar -javaagent:${project.build.directory}/lib/spf4j-core-${project.version}.jar</argLine>
   </properties>
 
   <dependencies>
@@ -59,16 +60,10 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
+      <groupId>org.spf4j</groupId>
+      <artifactId>spf4j-slf4j-test</artifactId>
       <scope>test</scope>
-      <version>${slf4j.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.avro</groupId>
-      <artifactId>avro-tools</artifactId>
-      <version>${avro.version}</version>
-      <scope>test</scope>
+      <version>${project.version}</version>
     </dependency>
     <dependency>
       <groupId>org.hamcrest</groupId>
@@ -128,12 +123,21 @@
           <skip>true</skip>
           <forkCount>1</forkCount>
           <reuseForks>false</reuseForks>
-          <systemPropertyVariables>
+          <systemProperties>
+            <spf4j.test.log.expectingErrorsIn>org.aspectj.weaver.bcel.BcelWorld</spf4j.test.log.expectingErrorsIn>
+            <aj.weaving.verbose>true</aj.weaving.verbose>
+            <org.aspectj.tracing.enabled>false</org.aspectj.tracing.enabled>
+            <org.aspectj.tracing.debug>false</org.aspectj.tracing.debug>
+            <spf4j.test.log.rootPrintLevelIDE>TRACE</spf4j.test.log.rootPrintLevelIDE>
+            <spf4j.test.log.rootPrintLevel>INFO</spf4j.test.log.rootPrintLevel>
+            <org.aspectj.weaver.loadtime.configuration>file:META-INF/aop.xml</org.aspectj.weaver.loadtime.configuration>
+          </systemProperties>
+          <properties>
             <property>
-              <name>aj.weaving.verbose</name>
-              <value>true</value>
+              <name>listener</name>
+              <value>org.spf4j.test.log.junit4.Spf4jTestLogRunListener</value>
             </property>
-          </systemPropertyVariables>
+          </properties>
         </configuration>
         <executions>
           <execution>
@@ -150,8 +154,8 @@
       </plugin>
                        
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>findbugs-maven-plugin</artifactId>
+        <groupId>com.github.spotbugs</groupId>
+        <artifactId>spotbugs-maven-plugin</artifactId>
       </plugin>
             
       <plugin>
@@ -170,22 +174,22 @@
             <id>install node and npm</id>
             <phase>generate-resources</phase>
             <goals>
-                <goal>install-node-and-npm</goal>
+              <goal>install-node-and-npm</goal>
             </goals>
             <configuration>
-                <nodeVersion>v4.4.4</nodeVersion>
-                <npmVersion>2.15.1</npmVersion>
+              <nodeVersion>v4.4.4</nodeVersion>
+              <npmVersion>2.15.1</npmVersion>
             </configuration>
-         </execution>
+          </execution>
           <execution>
-              <id>install AVRODOC</id>
-              <phase>generate-resources</phase>
-              <goals>
-                  <goal>npm</goal>
-              </goals>
-              <configuration>
-                  <arguments>install avrodoc -g</arguments>
-              </configuration>
+            <id>install AVRODOC</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>npm</goal>
+            </goals>
+            <configuration>
+              <arguments>install avrodoc -g</arguments>
+            </configuration>
           </execution>
         </executions>
         <configuration>
@@ -230,7 +234,7 @@
               </target>
             </configuration>
           </execution>
-         <execution>
+          <execution>
             <id>generate all sysprop defined files</id>
             <phase>process-classes</phase>
             <goals>
@@ -238,17 +242,17 @@
             </goals>
             <configuration>
               <target>
-              <apply executable="java" force="true">
-                <arg value="-cp" />
-                <arg pathref="maven.test.classpath" />
-                <arg value="org.apache.avro.tool.Main" />
-                <arg value="idl2schemata" />
-                <srcfile />
-                <targetFile />
-                <mapper type="regexp" from="^((.*/)?)([^/]+)\.avdl$$" to="${project.basedir}/target/generated-sources/avsc/\1" />
-                <fileset dir="${project.basedir}/target/generated-sources/avdl" includes="**/*.avdl" />
-              </apply>
-             </target>
+                <apply executable="${java8.home}/bin/java" force="true">
+                  <arg value="-cp" />
+                  <arg pathref="maven.plugin.classpath" />
+                  <arg value="org.apache.avro.tool.Main" />
+                  <arg value="idl2schemata" />
+                  <srcfile />
+                  <targetFile />
+                  <mapper type="regexp" from="^((.*/)?)([^/]+)\.avdl$$" to="${project.basedir}/target/generated-sources/avsc/\1" />
+                  <fileset dir="${project.basedir}/target/generated-sources/avdl" includes="**/*.avdl" />
+                </apply>
+              </target>
             </configuration>
           </execution>
 
@@ -262,7 +266,7 @@
               <skip>${skip.avrodoc}</skip>
               <target>
                 <fileset id="fileset" dir="${project.basedir}/target/generated-sources/avsc">
-                        <include name="**/*.avsc" />
+                  <include name="**/*.avsc" />
                 </fileset>
                 <pathconvert refid="fileset" property="converted" pathsep=" ">
                   <globmapper from="${project.basedir}/target/generated-sources/avsc/*" to="*" />
@@ -289,8 +293,82 @@
           </execution>
 
         </executions>
+        <dependencies>
+          <dependency>
+            <groupId>org.apache.avro</groupId>
+            <artifactId>avro-tools</artifactId>
+            <version>${avro.version}</version>
+          </dependency>
+        </dependencies>
       </plugin>
 
     </plugins>
+    <pluginManagement>
+      <plugins>
+        <!--This plugin's configuration is used to store Eclipse m2e settings only. It has no influence on the Maven build itself.-->
+        <plugin>
+          <groupId>org.eclipse.m2e</groupId>
+          <artifactId>lifecycle-mapping</artifactId>
+          <version>1.0.0</version>
+          <configuration>
+            <lifecycleMappingMetadata>
+              <pluginExecutions>
+                <pluginExecution>
+                  <pluginExecutionFilter>
+                    <groupId>
+                      org.apache.maven.plugins
+                    </groupId>
+                    <artifactId>
+                      maven-antrun-plugin
+                    </artifactId>
+                    <versionRange>[1.8,)</versionRange>
+                    <goals>
+                      <goal>run</goal>
+                    </goals>
+                  </pluginExecutionFilter>
+                  <action>
+                    <ignore />
+                  </action>
+                </pluginExecution>
+                <pluginExecution>
+                  <pluginExecutionFilter>
+                    <groupId>
+                      org.apache.maven.plugins
+                    </groupId>
+                    <artifactId>
+                      maven-dependency-plugin
+                    </artifactId>
+                    <versionRange>[2.10,)</versionRange>
+                    <goals>
+                      <goal>copy</goal>
+                    </goals>
+                  </pluginExecutionFilter>
+                  <action>
+                    <ignore />
+                  </action>
+                </pluginExecution>
+                <pluginExecution>
+                  <pluginExecutionFilter>
+                    <groupId>org.spf4j</groupId>
+                    <artifactId>
+                      spf4j-config-discovery-maven-plugin
+                    </artifactId>
+                    <versionRange>
+                      [8.3.14-SNAPSHOT,)
+                    </versionRange>
+                    <goals>
+                      <goal>generate</goal>
+                    </goals>
+                  </pluginExecutionFilter>
+                  <action>
+                    <ignore />
+                  </action>
+                </pluginExecution>
+              </pluginExecutions>
+            </lifecycleMappingMetadata>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
   </build>
 </project>

@@ -33,146 +33,129 @@ package org.spf4j.ssdump2;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import gnu.trove.map.TIntObjectMap;
-import gnu.trove.map.TMap;
-import gnu.trove.map.hash.THashMap;
 import gnu.trove.map.hash.TIntObjectHashMap;
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.PushbackInputStream;
+import java.io.UncheckedIOException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.util.ArrayDeque;
-import java.util.Deque;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
+import javax.annotation.Nullable;
+import javax.annotation.ParametersAreNonnullByDefault;
+import javax.annotation.WillNotClose;
 import org.apache.avro.io.BinaryDecoder;
 import org.apache.avro.io.BinaryEncoder;
+import org.apache.avro.io.Decoder;
 import org.apache.avro.io.DecoderFactory;
 import org.apache.avro.io.EncoderFactory;
 import org.apache.avro.specific.SpecificDatumReader;
 import org.apache.avro.specific.SpecificDatumWriter;
-import org.spf4j.base.Handler;
+import org.spf4j.base.Methods;
+import org.spf4j.base.avro.Converters;
+import org.spf4j.base.avro.Method;
+import org.spf4j.base.avro.StackSampleElement;
 import org.spf4j.io.MemorizingBufferedInputStream;
-import org.spf4j.ssdump2.avro.AMethod;
 import org.spf4j.stackmonitor.SampleNode;
-import org.spf4j.ssdump2.avro.ASample;
-import org.spf4j.base.Method;
 
 /**
  *
  * @author zoly
  */
+@ParametersAreNonnullByDefault
 public final class Converter {
 
   private Converter() {
   }
 
-  private static final class TraversalNode {
-
-    private final Method method;
-    private final SampleNode node;
-    private final int parentId;
-
-    TraversalNode(final Method method, final SampleNode node, final int parentId) {
-      this.method = method;
-      this.node = node;
-      this.parentId = parentId;
+  public static String createLabeledSsdump2FileName(final String baseFileName, final String label) {
+    try {
+      String encoded = URLEncoder.encode(label, StandardCharsets.UTF_8.name());
+      encoded = encoded.replace("_", "%5F");
+      return baseFileName + '_' + encoded + ".ssdump2";
+    } catch (UnsupportedEncodingException ex) {
+      throw new IllegalArgumentException("Unable to encode: " + label, ex);
     }
-
-    public Method getMethod() {
-      return method;
-    }
-
-    public SampleNode getNode() {
-      return node;
-    }
-
-    public int getParentId() {
-      return parentId;
-    }
-
-    @Override
-    public String toString() {
-      return "TraversalNode{" + "method=" + method + ", node=" + node + ", parentId=" + parentId + '}';
-    }
-
   }
 
-  public static <E extends Exception> int convert(final Method method, final SampleNode node,
-          final int parentId, final int id,
-          final Handler<ASample, E> handler) throws E {
-
-    final Deque<TraversalNode> dq = new ArrayDeque<>();
-    dq.addLast(new TraversalNode(method, node, parentId));
-    int nid = id;
-    while (!dq.isEmpty()) {
-      TraversalNode first = dq.removeFirst();
-      Method m = first.getMethod();
-      ASample sample = new ASample();
-      sample.id = nid;
-      SampleNode n = first.getNode();
-      sample.count = n.getSampleCount();
-      AMethod am = new AMethod();
-      am.setName(m.getMethodName());
-      am.setDeclaringClass(m.getDeclaringClass());
-      sample.method = am;
-      sample.parentId = first.getParentId();
-      final TMap<Method, SampleNode> subNodes = n.getSubNodes();
-      final int pid = nid;
-      if (subNodes != null) {
-        subNodes.forEachEntry((a, b) -> {
-          dq.addLast(new TraversalNode(a, b, pid));
-          return true;
-        });
+  public static String getLabelFromSsdump2FileName(final String fileName) {
+    int spext = fileName.lastIndexOf(".ssdump2");
+    if (spext < 0) {
+      throw new IllegalArgumentException("Invalid ssdump2 file name: " + fileName);
+    }
+    int grsIdx = fileName.lastIndexOf('_', spext);
+    try {
+      if (grsIdx < 0) {
+        return URLDecoder.decode(fileName.substring(0, spext), StandardCharsets.UTF_8.name());
+      } else {
+        return URLDecoder.decode(fileName.substring(grsIdx + 1, spext), StandardCharsets.UTF_8.name());
       }
-      handler.handle(sample, parentId);
-      nid++;
+    } catch (UnsupportedEncodingException ex) {
+      throw new IllegalArgumentException("Invalid ssdump2 file name: " + fileName, ex);
     }
-    return nid;
   }
 
-  public static SampleNode convert(final Iterator<ASample> samples) {
+  public static SampleNode convert(final Iterator<StackSampleElement> samples) {
     TIntObjectMap<SampleNode> index = new TIntObjectHashMap<>();
     while (samples.hasNext()) {
-      ASample asmp = samples.next();
-      SampleNode sn = new SampleNode(asmp.count, new THashMap<Method, SampleNode>());
-      SampleNode parent = index.get(asmp.parentId);
+      StackSampleElement asmp = samples.next();
+      SampleNode sn = new SampleNode(asmp.getCount());
+      SampleNode parent = index.get(asmp.getParentId());
       if (parent != null) {
-        AMethod method = asmp.getMethod();
-        Method m = Method.getMethod(method.declaringClass, method.getName());
-        final Map<Method, SampleNode> subNodes = parent.getSubNodes();
-        if (subNodes == null) {
-          throw new IllegalStateException("Bug, state " + index + "; at node " + asmp);
-        }
-        subNodes.put(m, sn);
+        Method m = asmp.getMethod();
+        parent.put(m, sn);
       }
-      index.put(asmp.id, sn);
+      index.put(asmp.getId(), sn);
     }
     return index.get(0);
   }
 
   public static void save(final File file, final SampleNode collected) throws IOException {
-    try (BufferedOutputStream bos = new BufferedOutputStream(
-            Files.newOutputStream(file.toPath()))) {
-      final SpecificDatumWriter<ASample> writer = new SpecificDatumWriter<>(ASample.SCHEMA$);
+    try (OutputStream bos = newOutputStream(file)) {
+      final SpecificDatumWriter<StackSampleElement> writer
+              = new SpecificDatumWriter<>(StackSampleElement.getClassSchema());
       final BinaryEncoder encoder = EncoderFactory.get().directBinaryEncoder(bos, null);
-      Converter.convert(Method.ROOT, collected,
-              -1, 0, (final ASample object, final long deadline) -> {
-                writer.write(object, encoder);
-      });
+      Converters.convert(Methods.ROOT, collected,
+              -1, 0, (StackSampleElement object) -> {
+                try {
+                  writer.write(object, encoder);
+                } catch (IOException ex) {
+                  throw new UncheckedIOException(ex);
+                }
+              });
       encoder.flush();
     }
   }
 
   @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
   public static SampleNode load(final File file) throws IOException {
+    try (InputStream fis = newInputStream(file)) {
+      return load(fis);
+    }
+  }
+
+  public static SampleNode load(@WillNotClose final InputStream fis) throws IOException {
     try (MemorizingBufferedInputStream bis
-            = new MemorizingBufferedInputStream(Files.newInputStream(file.toPath()))) {
+            = new MemorizingBufferedInputStream(fis)) {
       final PushbackInputStream pis = new PushbackInputStream(bis);
-      final SpecificDatumReader<ASample> reader = new SpecificDatumReader<>(ASample.SCHEMA$);
+      final SpecificDatumReader<StackSampleElement> reader =
+              new SpecificDatumReader<>(StackSampleElement.getClassSchema());
       final BinaryDecoder decoder = DecoderFactory.get().directBinaryDecoder(pis, null);
-      return convert(new Iterator<ASample>() {
+      return convert(new Iterator<StackSampleElement>() {
 
         @Override
         public boolean hasNext() {
@@ -181,13 +164,13 @@ public final class Converter {
             pis.unread(read);
             return read >= 0;
           } catch (IOException ex) {
-            throw new RuntimeException(ex);
+            throw new UncheckedIOException(ex);
           }
         }
 
         @Override
         @SuppressFBWarnings
-        public ASample next() {
+        public StackSampleElement next() {
           try {
             return reader.read(null, decoder);
           } catch (IOException ex) {
@@ -204,4 +187,178 @@ public final class Converter {
       });
     }
   }
+
+  public static void saveLabeledDumps(final File file, final Map<String, SampleNode> pcollected) throws IOException {
+    try (OutputStream bos = newOutputStream(file)) {
+      final SpecificDatumWriter<StackSampleElement> writer = new SpecificDatumWriter<>(StackSampleElement.SCHEMA$);
+      final BinaryEncoder encoder = EncoderFactory.get().directBinaryEncoder(bos, null);
+
+      encoder.writeMapStart();
+      final Map<String, SampleNode> collected = pcollected.entrySet().stream()
+              .filter((e) -> e.getValue() != null)
+              .collect(Collectors.toMap((e) -> e.getKey(), (e) -> e.getValue()));
+      encoder.setItemCount(collected.size());
+      for (Map.Entry<String, SampleNode> entry : collected.entrySet()) {
+        encoder.startItem();
+        encoder.writeString(entry.getKey());
+        encoder.writeArrayStart();
+        Converters.convert(Methods.ROOT, entry.getValue(),
+                -1, 0, (final StackSampleElement object) -> {
+                  try {
+                  encoder.setItemCount(1L);
+                  encoder.startItem();
+                  writer.write(object, encoder);
+                  } catch (IOException ex) {
+                    throw new UncheckedIOException(ex);
+                  }
+                });
+        encoder.writeArrayEnd();
+      }
+      encoder.writeMapEnd();
+      encoder.flush();
+    }
+  }
+
+  private static OutputStream newOutputStream(final File file) throws IOException {
+    OutputStream result = new BufferedOutputStream(
+            Files.newOutputStream(file.toPath()));
+    if (file.getName().endsWith(".gz")) {
+      try {
+        result = new GZIPOutputStream(result);
+      } catch (IOException | RuntimeException ex) {
+        result.close();
+        throw ex;
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Load samples forrm file containing multiple labeled stack samples.
+   * @param file the ssdump3 file.
+   * @return
+   * @throws IOException
+   */
+  @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
+  public static Map<String, SampleNode> loadLabeledDumps(final File file) throws IOException {
+    try (InputStream bis = newInputStream(file)) {
+      final SpecificDatumReader<StackSampleElement> reader = new SpecificDatumReader<>(StackSampleElement.SCHEMA$);
+      final BinaryDecoder decoder = DecoderFactory.get().directBinaryDecoder(bis, null);
+      long nrItems = decoder.readMapStart();
+      StackSampleElement asmp = new StackSampleElement();
+      Map<String, SampleNode> result = new HashMap<>((int) nrItems);
+      while (nrItems > 0) {
+        for (int i = 0; i < nrItems; i++) {
+          String key = decoder.readString();
+          TIntObjectMap<SampleNode> index = loadSamples(decoder, asmp, reader);
+          result.put(key, index.get(0));
+        }
+        nrItems = decoder.mapNext();
+      }
+      return result;
+    }
+  }
+
+  @SuppressFBWarnings("OCP_OVERLY_CONCRETE_PARAMETER")// it's a private method, don't care about being generic
+  private static TIntObjectMap<SampleNode> loadSamples(final Decoder decoder,
+          final StackSampleElement pasmp,
+          final SpecificDatumReader<StackSampleElement> reader) throws IOException {
+    TIntObjectMap<SampleNode> index = new TIntObjectHashMap<>();
+    long nrArrayItems = decoder.readArrayStart();
+    while (nrArrayItems > 0) {
+      for (int j = 0; j < nrArrayItems; j++) {
+        StackSampleElement asmp = reader.read(pasmp, decoder);
+        SampleNode sn = new SampleNode(asmp.getCount());
+        SampleNode parent = index.get(asmp.getParentId());
+        if (parent != null) {
+          Method readMethod = asmp.getMethod();
+          Method m = new Method(readMethod.getDeclaringClass(), readMethod.getName());
+          parent.put(m, sn);
+        }
+        index.put(asmp.getId(), sn);
+      }
+      nrArrayItems = decoder.arrayNext();
+    }
+    return index;
+  }
+
+  /**
+   * Load the labels from a ssdump3 file.
+   * @param file the ssdump3 file.
+   * @throws IOException
+   */
+  public static void loadLabels(final File file, final Consumer<String> labalsConsumer) throws IOException {
+    try (InputStream bis = newInputStream(file)) {
+      final SpecificDatumReader<StackSampleElement> reader = new SpecificDatumReader<>(StackSampleElement.SCHEMA$);
+      final BinaryDecoder decoder = DecoderFactory.get().directBinaryDecoder(bis, null);
+      long nrItems = decoder.readMapStart();
+      StackSampleElement asmp = new StackSampleElement();
+      while (nrItems > 0) {
+        for (int i = 0; i < nrItems; i++) {
+          String key = decoder.readString();
+          labalsConsumer.accept(key);
+          skipDump(decoder, reader, asmp);
+        }
+        nrItems = decoder.mapNext();
+      }
+    }
+  }
+
+  @SuppressFBWarnings("OCP_OVERLY_CONCRETE_PARAMETER")// it's a private method, don't care about being generic
+  private static void skipDump(final Decoder decoder,
+          final SpecificDatumReader<StackSampleElement> reader,
+          final StackSampleElement asmp) throws IOException {
+    long nrArrayItems = decoder.readArrayStart();
+    while (nrArrayItems > 0) {
+      for (int j = 0; j < nrArrayItems; j++) {
+        reader.read(asmp, decoder);
+      }
+      nrArrayItems = decoder.arrayNext();
+    }
+  }
+
+ /**
+   * Load samples forrm file containing multiple labeled stack samples.
+   * @param file the ssdump3 file.
+   * @return
+   * @throws IOException
+   */
+  @SuppressFBWarnings("NP_LOAD_OF_KNOWN_NULL_VALUE")
+  @Nullable
+  public static SampleNode loadLabeledDump(final File file, final String label) throws IOException {
+    try (InputStream bis = newInputStream(file)) {
+      final SpecificDatumReader<StackSampleElement> reader = new SpecificDatumReader<>(StackSampleElement.SCHEMA$);
+      final BinaryDecoder decoder = DecoderFactory.get().directBinaryDecoder(bis, null);
+      long nrItems = decoder.readMapStart();
+      StackSampleElement asmp = new StackSampleElement();
+      while (nrItems > 0) {
+        for (int i = 0; i < nrItems; i++) {
+          String key = decoder.readString();
+          if (label.equals(key)) {
+            return loadSamples(decoder, asmp, reader).get(0);
+          } else {
+            skipDump(decoder, reader, asmp);
+          }
+        }
+        nrItems = decoder.mapNext();
+      }
+      return null;
+    }
+  }
+
+  private static InputStream newInputStream(final File file) throws IOException {
+    InputStream result =  new BufferedInputStream(Files.newInputStream(file.toPath()));
+    if (file.getName().endsWith(".gz")) {
+      try {
+        return new GZIPInputStream(result);
+      } catch (IOException | RuntimeException ex) {
+        result.close();
+        throw ex;
+      }
+    } else {
+      return result;
+    }
+  }
+
+
 }

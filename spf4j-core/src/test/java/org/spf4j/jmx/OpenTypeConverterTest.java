@@ -39,7 +39,7 @@ import java.io.File;
 import java.io.InvalidObjectException;
 import java.io.NotSerializableException;
 import java.io.Serializable;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -48,12 +48,14 @@ import java.util.concurrent.Future;
 import javax.management.openmbean.CompositeData;
 import javax.management.openmbean.CompositeDataSupport;
 import javax.management.openmbean.OpenDataException;
-import org.apache.commons.lang3.tuple.Pair;
-import org.joda.time.LocalDate;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.base.ComparablePair;
+import org.spf4j.base.Pair;
 import org.spf4j.jmx.mappers.Spf4jOpenTypeMapper;
+import org.spf4j.stackmonitor.SampleNode;
 import org.spf4j.tsdb2.avro.ColumnDef;
 import org.spf4j.tsdb2.avro.TableDef;
 import org.spf4j.tsdb2.avro.Type;
@@ -62,17 +64,13 @@ import org.spf4j.tsdb2.avro.Type;
  *
  * @author Zoltan Farkas
  */
-
-@SuppressFBWarnings({ "SE_BAD_FIELD_INNER_CLASS", "SIC_INNER_SHOULD_BE_STATIC_ANON" })
+@SuppressFBWarnings({"SE_BAD_FIELD_INNER_CLASS", "SIC_INNER_SHOULD_BE_STATIC_ANON"})
 public class OpenTypeConverterTest {
+
+  private static final Logger LOG = LoggerFactory.getLogger(OpenTypeConverterTest.class);
 
   private final Spf4jOpenTypeMapper conv = new Spf4jOpenTypeMapper();
 
-  @Test
-  public void testConverter() throws NotSerializableException {
-    JMXBeanMapping mxBeanMapping = conv.get(File.class);
-    Assert.assertNull(mxBeanMapping);
-  }
 
   @Test
   public void testConverter2() throws NotSerializableException {
@@ -84,84 +82,91 @@ public class OpenTypeConverterTest {
   public void testConverterPrimArray() throws OpenDataException, InvalidObjectException, NotSerializableException {
     JMXBeanMapping mxBeanMapping2 = conv.get(int[].class);
     Assert.assertNotNull(mxBeanMapping2);
-    Object obj = mxBeanMapping2.toOpenValue(new int [] {1, 2, 3});
+    Object obj = mxBeanMapping2.toOpenValue(new int[]{1, 2, 3});
     Object fromOpenValue = mxBeanMapping2.fromOpenValue(obj);
-    Assert.assertArrayEquals(new int [] {1, 2, 3}, (int[]) fromOpenValue);
+    Assert.assertArrayEquals(new int[]{1, 2, 3}, (int[]) fromOpenValue);
   }
 
   @Test
   public void testConverterAvroArray() throws OpenDataException, NotSerializableException {
     JMXBeanMapping mxBeanMapping2 = conv.get(TableDef[].class);
     Assert.assertNotNull(mxBeanMapping2);
-    Object toOpenValue = mxBeanMapping2.toOpenValue(new TableDef[] {
+    TableDef[] defs = new TableDef[]{
       TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
               .setSampleTime(10)
-              .setColumns(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+              .setColumns(Collections.singletonList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
                       .setDescription("bla").setUnitOfMeasurement("um").build())).build()
-    });
-    System.out.println(toOpenValue);
+    };
+    Object toOpenValue = mxBeanMapping2.toOpenValue(defs);
+    LOG.debug("Open value {} from {}", toOpenValue, defs);
   }
 
   @Test
   public void testConverterSet() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Set<TableDef>>() {}).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Set<TableDef>>() {
+    }).getType());
     Assert.assertNotNull(mxBeanMapping2);
     Object toOpenValue = mxBeanMapping2.toOpenValue(ImmutableSet.of(
-      TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
-              .setSampleTime(10)
-              .setColumns(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
-                      .setDescription("bla").setUnitOfMeasurement("um").build())).build()
+            TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
+                    .setSampleTime(10)
+                    .setColumns(Collections.singletonList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+                            .setDescription("bla").setUnitOfMeasurement("um").build())).build()
     ));
-    System.out.println(toOpenValue);
+    LOG.debug("OpenValue = {}", toOpenValue);
     Object fromOpenValue = mxBeanMapping2.fromOpenValue(toOpenValue);
-    System.out.println(fromOpenValue);
+    LOG.debug("Back to object = {}", fromOpenValue);
     Assert.assertTrue("must be set, not " + fromOpenValue.getClass(), fromOpenValue instanceof Set);
   }
 
   @Test
   public void testConverterIterable() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Iterable<TableDef>>() {}).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Iterable<TableDef>>() {
+    }).getType());
     Assert.assertNotNull(mxBeanMapping2);
     Object toOpenValue = mxBeanMapping2.toOpenValue(ImmutableSet.of(
-      TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
-              .setSampleTime(10)
-              .setColumns(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
-                      .setDescription("bla").setUnitOfMeasurement("um").build())).build()
+            TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
+                    .setSampleTime(10)
+                    .setColumns(Collections.singletonList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+                            .setDescription("bla").setUnitOfMeasurement("um").build())).build()
     ));
-    System.out.println(toOpenValue);
+    LOG.debug("To open value: {}", toOpenValue);
     Object fromOpenValue = mxBeanMapping2.fromOpenValue(toOpenValue);
-    System.out.println(fromOpenValue);
+    LOG.debug("Back to object: {}", fromOpenValue);
     Assert.assertTrue("must be Iterable, not " + fromOpenValue.getClass(), fromOpenValue instanceof Iterable);
   }
 
-
   @Test
   public void testConverterList() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<List<ColumnDef>>() {}).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<List<ColumnDef>>() {
+    }).getType());
     Assert.assertNotNull(mxBeanMapping2);
-    Object ov = mxBeanMapping2.toOpenValue(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+    Object ov = mxBeanMapping2.toOpenValue(Collections.singletonList(
+            ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
             .setDescription("bla").setUnitOfMeasurement("um").build()));
-    System.out.println(ov);
+    LOG.debug("OpenValue = {}", ov);
     mxBeanMapping2.fromOpenValue(ov);
   }
 
   @Test
   public void testConverterFuture() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping map = conv.get((new TypeToken<Future<Integer>>() {}).getType());
+    JMXBeanMapping map = conv.get((new TypeToken<Future<Integer>>() {
+    }).getType());
     Assert.assertNull(map);
   }
 
   @Test
   @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
   public void testConverterMap() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Map<String, ColumnDef>>() {}).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Map<String, ColumnDef>>() {
+    }).getType());
     Assert.assertNotNull(mxBeanMapping2);
-    Object ov = mxBeanMapping2.toOpenValue(ImmutableMap.of("k1", ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+    Object ov = mxBeanMapping2.toOpenValue(
+            ImmutableMap.of("k1", ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
             .setDescription("bla").setUnitOfMeasurement("um").build(),
             "K2",
             ColumnDef.newBuilder().setName("bla2").setType(Type.LONG)
                     .setDescription("bla").setUnitOfMeasurement("um").build()));
-    System.out.println(ov);
+    LOG.debug("OpenValue = {}", ov);
     mxBeanMapping2.fromOpenValue(ov);
   }
 
@@ -173,95 +178,90 @@ public class OpenTypeConverterTest {
     Properties props = new Properties();
     props.setProperty("K", "V");
     Object ov = mxBeanMapping2.toOpenValue(props);
-    System.out.println(ov);
+    LOG.debug("Open Value = {}", ov);
     Properties properties = (Properties) mxBeanMapping2.fromOpenValue(ov);
     Assert.assertEquals(props, properties);
   }
 
   @Test
   public void testConverterMapStrObject() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Map<String, ? extends Serializable>>() {}).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<Map<String, ? extends Serializable>>() {
+    }).getType());
     Assert.assertNull(mxBeanMapping2);
   }
 
   @Test
   public void testConverterMapStrObject2() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping get = conv.get((new TypeToken<Map<String, Object>>() {}).getType());
+    JMXBeanMapping get = conv.get((new TypeToken<Map<String, Object>>() {
+    }).getType());
     Assert.assertNull(get);
   }
 
   @Test
   public void testConverterMapStrObject3() throws OpenDataException, InvalidObjectException, NotSerializableException {
     JMXBeanMapping mxBeanMapping2 = conv.get(Map.class);
-//    Map map = new HashMap();
-//    map.put("bla", "bla");
-//    Object toOpenValue = mxBeanMapping2.toOpenValue(map);
-//    System.out.println(toOpenValue);
     Assert.assertNull(mxBeanMapping2);
   }
 
   @Test
   public void testComparablePair() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<ComparablePair<Integer, TableDef>>() { }).getType());
+    JMXBeanMapping mxBeanMapping2 = conv.get((new TypeToken<ComparablePair<Integer, TableDef>>() {
+    }).getType());
     Assert.assertNotNull(mxBeanMapping2);
-    Object ov = mxBeanMapping2.toOpenValue(Pair.of(3, TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
+    Object ov = mxBeanMapping2.toOpenValue(
+            Pair.of(3, TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
             .setSampleTime(10)
-            .setColumns(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+            .setColumns(Collections.singletonList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
                     .setDescription("bla").setUnitOfMeasurement("um").build())).build()));
-    ComparablePair<Integer, TableDef> pair =
-            (ComparablePair<Integer, TableDef>) mxBeanMapping2.fromOpenValue(ov);
+    ComparablePair<Integer, TableDef> pair
+            = (ComparablePair<Integer, TableDef>) mxBeanMapping2.fromOpenValue(ov);
     Assert.assertEquals(3L, pair.getFirst().longValue());
   }
 
-
-
   @Test
   public void testListSerializablePair() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping mxBeanMapping2 =
-            conv.get((new TypeToken<List<ComparablePair<Integer, TableDef>>>() { }).getType());
+    JMXBeanMapping mxBeanMapping2
+            = conv.get((new TypeToken<List<ComparablePair<Integer, TableDef>>>() {
+            }).getType());
     Assert.assertNotNull(mxBeanMapping2);
-    Object ov = mxBeanMapping2.toOpenValue(Arrays.asList(Pair.of(3, TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
+    Object ov = mxBeanMapping2.toOpenValue(
+            Collections.singletonList(Pair.of(3, TableDef.newBuilder().setId(4).setDescription("bla").setName("name")
             .setSampleTime(10)
-            .setColumns(Arrays.asList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
+            .setColumns(Collections.singletonList(ColumnDef.newBuilder().setName("bla").setType(Type.LONG)
                     .setDescription("bla").setUnitOfMeasurement("um").build())).build())));
-    List<ComparablePair<Integer, TableDef>> res =
-            (List<ComparablePair<Integer, TableDef>>) mxBeanMapping2.fromOpenValue(ov);
-   ComparablePair<Integer, TableDef> pair =
-            (ComparablePair<Integer, TableDef>) res.get(0);
-   Assert.assertEquals(3L, pair.getFirst().longValue());
+    List<ComparablePair<Integer, TableDef>> res
+            = (List<ComparablePair<Integer, TableDef>>) mxBeanMapping2.fromOpenValue(ov);
+    ComparablePair<Integer, TableDef> pair
+            = (ComparablePair<Integer, TableDef>) res.get(0);
+    Assert.assertEquals(3L, pair.getFirst().longValue());
 
   }
-
 
   @Test(expected = NotSerializableException.class)
   public void testConverterRecursiveData() throws OpenDataException, InvalidObjectException, NotSerializableException {
     JMXBeanMapping get = conv.get(RecursiveTestBean.class);
-    System.out.println(get);
+    LOG.debug("Mapping = {}", get);
   }
 
   @Test
   public void testConverterRecursiveAvro() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping get = conv.get(org.spf4j.test.avro.SampleNode.class);
+    JMXBeanMapping get = conv.get(SampleNode.class);
     Assert.assertNull(get);
   }
 
   @Test
   public void testConverterRecursiveAvro2() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping get = conv.get(org.spf4j.test2.avro.SampleNode.class);
+    JMXBeanMapping get = conv.get(SampleNode.class);
     Assert.assertNull(get);
   }
 
   @Test
   public void testConverterFile() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping get = conv.get(File.class);
-    Assert.assertNull(get);
-  }
-
-
-  @Test
-  public void testJodaLocalDate() throws OpenDataException, InvalidObjectException, NotSerializableException {
-    JMXBeanMapping get = conv.get(LocalDate.class);
-    Assert.assertNull(get);
+    JMXBeanMapping m = conv.get(File.class);
+    File expected = new File("bla");
+    Object toOpenValue = m.toOpenValue(expected);
+    Object f = m.fromOpenValue(toOpenValue);
+    Assert.assertEquals(expected, f);
   }
 
 
@@ -271,10 +271,9 @@ public class OpenTypeConverterTest {
     Assert.assertNotNull(get);
     java.time.LocalDate now = java.time.LocalDate.now();
     Object ov = get.toOpenValue(now);
-    System.out.println(ov);
+    LOG.debug("Open Value = {}", ov);
     Assert.assertTrue(ov instanceof CompositeData);
   }
-
 
   @Test
   public void testCompositeData() throws OpenDataException, InvalidObjectException, NotSerializableException {

@@ -33,6 +33,7 @@ package org.spf4j.jmx;
 
 import java.lang.reflect.Type;
 import javax.management.MBeanException;
+import javax.management.ReflectionException;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,16 +44,19 @@ import org.junit.Test;
 public class DynamicMBeanBuilderTest {
 
   @Test
-  public void testGenericExportedOperation() throws MBeanException {
+  public void testGenericExportedOperation() throws MBeanException, ReflectionException {
     ExportedValuesMBean replace = new DynamicMBeanBuilder()
             .withOperation(new GenericExportedOperation("testOp",
-            "some TestOp",
-            (params) -> { System.out.print("bla"); return params[0]; },
-            new Type[] {String.class}, String.class,
-            new String[] {"p1"},
-            new String[] {"descP1"},
-            new boolean[] {true}, true)).replace("test", "dynatest");
-    Assert.assertEquals("ok", replace.invoke("testOp", new Object[] {"ok"}, new String [] {}));
+                    "some TestOp",
+                    (params) -> {
+                      System.out.print("bla");
+                      return params[0];
+                    },
+                    new Type[]{String.class}, String.class,
+                    new String[]{"p1"},
+                    new String[]{"descP1"},
+                    new boolean[]{true}, true)).replace("test", "dynatest");
+    Assert.assertEquals("ok", replace.invoke("testOp", new Object[]{"ok"}, new String[]{}));
 
   }
 

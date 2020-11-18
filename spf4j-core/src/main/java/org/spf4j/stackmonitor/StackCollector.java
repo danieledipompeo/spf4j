@@ -31,25 +31,20 @@
  */
 package org.spf4j.stackmonitor;
 
-import com.google.common.base.Function;
+import javax.annotation.Nullable;
+
 
 /**
  * @author zoly
  */
 public interface StackCollector {
 
-    /**
-     * Apply function on the collected samples.
-     * 
-     * @param transform - the function to apply on samples.
-     * @return - sample node before function was applied.
-     */
-    SampleNode applyOnSamples(Function<SampleNode, SampleNode> transform);
+    @Nullable
+    SampleNode getAndReset();
 
-    SampleNode clear();
+    @Nullable
+    SampleNode get();
 
-    void sample(Thread ignore);
-    
-    void addSample(StackTraceElement[] stackTrace);
-    
+    void collect(StackTraceElement[] stackTrace);
+
 }

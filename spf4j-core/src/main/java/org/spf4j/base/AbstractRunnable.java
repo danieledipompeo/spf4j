@@ -31,29 +31,23 @@
  */
 package org.spf4j.base;
 
-import com.google.common.util.concurrent.UncheckedExecutionException;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import javax.annotation.Nullable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
 
 /**
  * @author zoly
  */
+@SuppressFBWarnings("ACEM_ABSTRACT_CLASS_EMPTY_METHODS")
 public abstract class AbstractRunnable implements Runnable {
 
   @Deprecated
   public static final int ERROR_EXIT_CODE = SysExits.EX_SOFTWARE.exitCode();
 
-  private static final Logger LOGGER = LoggerFactory.getLogger(AbstractRunnable.class);
 
-  public static final Runnable NOP = new Runnable() {
-
-    @Override
-    public void run() {
-      //The nop runnable should do nothing...
-    }
-
-  };
+  public static final Runnable NOP = () -> { };
 
   private final boolean lenient;
 
@@ -106,7 +100,7 @@ public abstract class AbstractRunnable implements Runnable {
         Runtime.goDownWithError(ex, SysExits.EX_SOFTWARE);
       }
       if (lenient) {
-        LOGGER.error("Exception in runnable: ", ex);
+        Logger.getLogger(AbstractRunnable.class.getName()).log(Level.SEVERE, "Exception in runnable: ", ex);
       } else {
         throw new UncheckedExecutionException(ex);
       }

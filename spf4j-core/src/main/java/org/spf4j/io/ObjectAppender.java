@@ -32,45 +32,117 @@
 package org.spf4j.io;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ConcurrentModificationException;
+import java.util.function.BiConsumer;
+import javax.annotation.Nullable;
 import javax.annotation.ParametersAreNonnullByDefault;
+import org.spf4j.base.CoreTextMediaType;
+import org.spf4j.base.EscapeJsonStringAppendableWrapper;
 
 /**
  * @author zoly
  * @param <T> - type of object to append.
  */
 @ParametersAreNonnullByDefault
-public interface ObjectAppender<T> {
+@FunctionalInterface
+public interface ObjectAppender<T> extends BiConsumer<T, Appendable> {
 
-    void append(T object, Appendable appendTo) throws IOException;
+  /**
+   * the MimeType of the format used to write the Object.
+   * @return
+   */
+  default CoreTextMediaType getAppendedType() {
+    return CoreTextMediaType.TEXT_PLAIN;
+  }
+
+  /**
+   * Write an Object to a char stream.
+   * @param object
+   * @param appendTo
+   * @throws IOException
+   */
+  void append(T object, Appendable appendTo) throws IOException;
 
 
-    ObjectAppender<Object> TOSTRING_APPENDER = new ObjectAppender<Object>() {
-        @Override
-        public void append(final Object object, final Appendable appendTo) throws IOException {
-          if (object instanceof CharSequence) {
-            appendTo.append((CharSequence) object);
-          } else {
-            String toString = null;
-            int i = 10;
-            do {
-              try {
-                toString = object.toString();
-              } catch (ConcurrentModificationException ex) {
-                i--;
-              }
-            } while (toString == null && i > 0);
-            if (i != 10) {
-                appendTo.append("ConcurrentlyModifiedDuringToString:");
-            }
-            if (toString == null) {
-              appendTo.append(object.getClass().getName()).append('@')
-                      .append(Integer.toHexString(System.identityHashCode(object)));
-            } else {
-              appendTo.append(toString);
-            }
-          }
+  static void appendNullable(@Nullable final Object o, final Appendable appendTo,
+          final ObjectAppenderSupplier appenderSupplier)
+          throws IOException {
+    if (o == null) {
+      appendTo.append("null");
+    } else {
+      appenderSupplier.get(o.getClass()).append(o, appendTo, appenderSupplier);
+    }
+  }
+
+  static void appendNullableJson(@Nullable final Object o, final Appendable appendTo,
+          final ObjectAppenderSupplier appenderSupplier)
+          throws IOException {
+    if (o == null) {
+      appendTo.append("null");
+    } else {
+      ObjectAppender app = appenderSupplier.get(CoreTextMediaType.APPLICATION_JSON, o.getClass());
+      if (app != null) {
+         app.append(o, appendTo, appenderSupplier);
+      } else {
+        app = appenderSupplier.get(CoreTextMediaType.TEXT_PLAIN, o.getClass());
+        EscapeJsonStringAppendableWrapper sEsc = new EscapeJsonStringAppendableWrapper(appendTo);
+        appendTo.append('"');
+        app.append(o, sEsc, appenderSupplier);
+        appendTo.append('"');
+      }
+    }
+  }
+
+
+  /**
+   * Method to overwrite for implementing apenders for container objects.
+   */
+  default void append(T object, Appendable appendTo, ObjectAppenderSupplier appenderSupplier) throws IOException {
+    append(object, appendTo);
+  }
+
+  default void accept(final T object, final Appendable appendTo) {
+    try {
+      append(object, appendTo);
+    } catch (IOException ex) {
+      throw new UncheckedIOException(ex);
+    }
+  }
+
+  default String toString(final T object) {
+    StringBuilder sb = new StringBuilder();
+    this.accept(object, sb);
+    return sb.toString();
+  }
+
+  /**
+   * A simple Object appender that invokes the toString method of the object and writes the object out.
+   */
+  ObjectAppender<Object> TOSTRING_APPENDER = new ObjectAppender<Object>() {
+    @Override
+    public void append(final Object object, final Appendable appendTo) throws IOException {
+
+      String toString = null;
+      int i = 10;
+      do {
+        try {
+          toString = object.toString();
+        } catch (ConcurrentModificationException ex) {
+          i--;
         }
-    };
+      } while (toString == null && i > 0);
+      if (i != 10) {
+        appendTo.append("ConcurrentlyModifiedDuringToString:");
+      }
+      if (toString == null) {
+        appendTo.append(object.getClass().getName()).append('@')
+                .append(Integer.toHexString(System.identityHashCode(object)));
+      } else {
+        appendTo.append(toString);
+      }
+    }
+
+  };
 
 }

@@ -39,7 +39,6 @@ import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.spf4j.base.AbstractRunnable;
-import static org.spf4j.base.Runtime.WAIT_FOR_SHUTDOWN_MILLIS;
 
 /**
  * This executor aims to be a general purpose executor for async tasks. (equivalent to ForkJoinPool.commonPool())
@@ -59,10 +58,8 @@ public final class DefaultExecutor {
     final String value = System.getProperty(impParam, "spf4j");
     switch (value) {
       case "spf4j":
-        LifoThreadPoolExecutorSQP lifoExec = new LifoThreadPoolExecutorSQP("defaultExecutor", coreThreads,
-                Integer.MAX_VALUE, maxIdleMillis, 0, isDaemon,
-                Integer.getInteger("spf4j.executors.defaultExecutor.spinlockCount",
-                        1024));
+        LifoThreadPoolExecutorSQP lifoExec = new LifoThreadPoolExecutorSQP("defExec", coreThreads,
+                Integer.MAX_VALUE, maxIdleMillis, 0, isDaemon);
         lifoExec.exportJmx();
         INSTANCE = lifoExec;
         break;
@@ -71,27 +68,30 @@ public final class DefaultExecutor {
         break;
       case "legacy":
         INSTANCE = new ThreadPoolExecutor(coreThreads, Integer.MAX_VALUE, maxIdleMillis, TimeUnit.MILLISECONDS,
-                new SynchronousQueue<Runnable>(), new CustomThreadFactory("DefaultExecutor", isDaemon));
+                new SynchronousQueue<Runnable>(), new CustomThreadFactory("defExec", isDaemon));
         break;
       default:
         throw new IllegalArgumentException("Ivalid setting for " + impParam + " = " + value);
     }
-
     org.spf4j.base.Runtime.queueHookAtEnd(new AbstractRunnable(true) {
 
       @Override
       public void doRun() throws InterruptedException {
         INSTANCE.shutdown();
-        INSTANCE.awaitTermination(WAIT_FOR_SHUTDOWN_MILLIS, TimeUnit.MILLISECONDS);
+        INSTANCE.awaitTermination(org.spf4j.base.Runtime.WAIT_FOR_SHUTDOWN_NANOS, TimeUnit.NANOSECONDS);
         List<Runnable> remaining = INSTANCE.shutdownNow();
         if (remaining.size() > 0) {
-          System.err.println("Remaining tasks: " + remaining);
+          org.spf4j.base.Runtime.error("Remaining tasks: " + remaining);
         }
       }
     });
   }
 
   private DefaultExecutor() {
+  }
+
+  public static ExecutorService instance() {
+    return INSTANCE;
   }
 
 }

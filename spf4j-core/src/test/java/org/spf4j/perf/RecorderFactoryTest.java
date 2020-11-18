@@ -33,19 +33,17 @@ package org.spf4j.perf;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.spf4j.perf.impl.RecorderFactory;
-import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
-import java.util.List;
+import java.time.Instant;
+import java.util.Collection;
+import java.util.concurrent.TimeUnit;
+import org.apache.avro.Schema;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
-import org.spf4j.base.Throwables;
-import org.spf4j.perf.impl.ms.tsdb.TSDBMeasurementStore;
-import org.spf4j.tsdb2.TimeSeries;
-import org.spf4j.tsdb2.TSDBQuery;
-import org.spf4j.tsdb2.TSDBWriter;
-import org.spf4j.tsdb2.avro.TableDef;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.base.avro.AvroCloseableIterable;
+import org.spf4j.tsdb2.avro.Observation;
 
 /**
  *
@@ -55,25 +53,13 @@ import org.spf4j.tsdb2.avro.TableDef;
 @SuppressFBWarnings("MDM_THREAD_YIELD")
 public final class RecorderFactoryTest {
 
-  @BeforeClass
-  public static void init() {
-    Thread.setDefaultUncaughtExceptionHandler((final Thread t, final Throwable e) -> {
-      StringBuilder sb = new StringBuilder(128);
-      try {
-        Throwables.writeTo(e, sb, Throwables.PackageDetail.SHORT);
-      } catch (IOException ex) {
-        Assert.fail("Got Exception: " + ex);
-      }
-      Assert.fail("Got Exception: " + sb.toString());
-    });
-  }
+  private static final Logger LOG = LoggerFactory.getLogger(RecorderFactoryTest.class);
 
   /**
    * Test of createScalableQuantizedRecorder method, of class RecorderFactory.
    */
   @Test
-  public void testCreateScalableQuantizedRecorder() throws IOException, InterruptedException {
-    System.out.println("createScalableQuantizedRecorder");
+  public void testCreateScalableQuantizedRecorder() throws  IOException, InterruptedException {
     String forWhat = "test1";
     String unitOfMeasurement = "ms";
     int sampleTime = 1000;
@@ -81,7 +67,7 @@ public final class RecorderFactoryTest {
     int lowerMagnitude = 0;
     int higherMagnitude = 3;
     int quantasPerMagnitude = 10;
-    MeasurementRecorder result = RecorderFactory.createScalableQuantizedRecorder(
+    CloseableMeasurementRecorder result = RecorderFactory.createScalableQuantizedRecorder2(
             forWhat, unitOfMeasurement, sampleTime, factor, lowerMagnitude, higherMagnitude, quantasPerMagnitude);
     for (int i = 0; i < 500; i++) {
       result.record(i);
@@ -89,6 +75,21 @@ public final class RecorderFactoryTest {
     }
     result.close();
     assertData(forWhat, 124750);
+    MeasurementStore store = RecorderFactory.MEASUREMENT_STORE;
+    MeasurementStoreQuery query = store.query();
+    Collection<Schema> measurements = query.getMeasurements((x) -> forWhat.equals(x));
+    Schema m = measurements.iterator().next();
+    try (AvroCloseableIterable<Observation> observations = query.getObservations(m, Instant.EPOCH, Instant.now())) {
+      for (Observation o : observations) {
+        LOG.debug("RAW Obeservation", o);
+      }
+    }
+    try (AvroCloseableIterable<Observation> observations = query.getAggregatedObservations(m,
+            Instant.EPOCH, Instant.now(), 2, TimeUnit.SECONDS)) {
+      for (Observation o : observations) {
+        LOG.debug("AGG Obeservation", o);
+      }
+    }
   }
 
   /**
@@ -96,7 +97,6 @@ public final class RecorderFactoryTest {
    */
   @Test
   public void testCreateScalableQuantizedRecorderSource() throws IOException, InterruptedException {
-    System.out.println("createScalableQuantizedRecorderSource");
     Object forWhat = "bla";
     String unitOfMeasurement = "ms";
     int sampleTime = 1000;
@@ -104,19 +104,18 @@ public final class RecorderFactoryTest {
     int lowerMagnitude = 0;
     int higherMagnitude = 3;
     int quantasPerMagnitude = 10;
-    MeasurementRecorderSource result = RecorderFactory.createScalableQuantizedRecorderSource(
+    CloseableMeasurementRecorderSource result = RecorderFactory.createScalableQuantizedRecorderSource2(
             forWhat, unitOfMeasurement, sampleTime, factor, lowerMagnitude, higherMagnitude, quantasPerMagnitude);
     for (int i = 0; i < 5000; i++) {
       result.getRecorder("X" + i % 2).record(1);
       Thread.sleep(1);
     }
     result.close();
-    assertData("bla,X0", 2500);
+    assertData("bla_X0", 2500);
   }
 
   @Test
   public void testOutofQuantizedZoneValues() throws IOException, InterruptedException {
-    System.out.println("testOutofQuantizedZoneValues");
     String forWhat = "largeVals";
     String unitOfMeasurement = "ms";
     int sampleTime = 1000;
@@ -124,13 +123,13 @@ public final class RecorderFactoryTest {
     int lowerMagnitude = 0;
     int higherMagnitude = 3;
     int quantasPerMagnitude = 10;
-    MeasurementRecorder result = RecorderFactory.createScalableQuantizedRecorder(
+    CloseableMeasurementRecorder result = RecorderFactory.createScalableQuantizedRecorder2(
             forWhat, unitOfMeasurement, sampleTime, factor, lowerMagnitude, higherMagnitude, quantasPerMagnitude);
     for (int i = 0; i < 500; i++) {
       result.record(10000);
       Thread.sleep(20);
     }
-    ((Closeable) result).close();
+    result.close();
     assertData(forWhat, 5000000);
 
   }
@@ -140,34 +139,34 @@ public final class RecorderFactoryTest {
    */
   @Test
   public void testCreateScalableCountingRecorderSource() throws IOException, InterruptedException {
-    System.out.println("createScalableCountingRecorderSource");
     String forWhat = "counters";
     String unitOfMeasurement = "counts";
     int sampleTime = 1000;
-    MeasurementRecorderSource result = RecorderFactory.createScalableCountingRecorderSource(
+    CloseableMeasurementRecorderSource result = RecorderFactory.createScalableCountingRecorderSource2(
             forWhat, unitOfMeasurement, sampleTime);
     for (int i = 0; i < 5000; i++) {
       result.getRecorder("X" + i % 2).record(1);
       Thread.sleep(1);
     }
-    ((Closeable) result).close();
-    assertData(forWhat + ",X1", 2500);
+    result.close();
+    assertData(forWhat + "_X1", 2500);
   }
 
   @SuppressFBWarnings("CLI_CONSTANT_LIST_INDEX")
   public static void assertData(final String forWhat, final long expectedValue) throws IOException {
-    TSDBWriter dbWriter = ((TSDBMeasurementStore) RecorderFactory.MEASUREMENT_STORE).getDBWriter();
-    dbWriter.flush();
-    final File file = dbWriter.getFile();
-    List<TableDef> tableDefs = TSDBQuery.getTableDef(file, forWhat);
-    TableDef tableDef = tableDefs.get(0);
-    TimeSeries timeSeries = TSDBQuery.getTimeSeries(file, new long[]{tableDef.id}, 0, Long.MAX_VALUE);
-    long sum = 0;
-    long[][] values = timeSeries.getValues();
-    for (long[] row : values) {
-      sum += row[0];
+    MeasurementStore store = RecorderFactory.MEASUREMENT_STORE;
+    store.flush();
+    MeasurementStoreQuery query = store.query();
+    Collection<Schema> schemas = query.getMeasurements((x) -> forWhat.equals(x));
+    Schema schema = schemas.iterator().next();
+    try (AvroCloseableIterable<Observation> observations = query.getObservations(schema, Instant.EPOCH,
+            Instant.ofEpochMilli(Long.MAX_VALUE))) {
+      long sum = 0;
+      for (Observation o : observations) {
+        sum += o.getData().get(0);
+      }
+      Assert.assertEquals(expectedValue, sum);
     }
-    Assert.assertEquals(expectedValue, sum);
   }
 
   public static void main(final String[] args) throws IOException, InterruptedException {

@@ -31,11 +31,14 @@
  */
 package org.spf4j.unix;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -43,12 +46,31 @@ import org.junit.Test;
  */
 public class JVMArgumentsTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(JVMArgumentsTest.class);
+
+  @SuppressFBWarnings("PRMC_POSSIBLY_REDUNDANT_METHOD_CALLS")
   @Test
   public void testCurrentArgs() throws IOException {
     Assume.assumeFalse(org.spf4j.base.Runtime.isWindows());
     JVMArguments current = JVMArguments.current();
-    System.out.println(current);
+    LOG.debug("Current jvm args: {}", current);
     Assert.assertThat(current.getExecutable(), Matchers.endsWith("java"));
+    current.setVMArgument("-Xbla");
+    Assert.assertTrue(current.hasVMArgument("-Xbla"));
+    Assert.assertTrue(current.hasVMArgumentStartingWith("-Xb"));
+    Assert.assertTrue(current.removeVMArgument("-Xbla"));
+    Assert.assertFalse(current.hasVMArgument("-Xbla"));
+
+    current.createOrUpdateSystemProperty("spf4j.restart",
+              (old) -> old == null ? "1" :  Integer.toString(Integer.parseInt(old) + 1));
+    Assert.assertEquals("1", current.getSystemProperty("spf4j.restart"));
+    current.createOrUpdateSystemProperty("spf4j.restart",
+              (old) -> old == null ? "1" :  Integer.toString(Integer.parseInt(old) + 1));
+    Assert.assertEquals("2", current.getSystemProperty("spf4j.restart"));
+    Assert.assertEquals("2", current.removeSystemProperty("spf4j.restart"));
+    Assert.assertNull(current.getSystemProperty("spf4j.restart"));
+
+
   }
 
 }

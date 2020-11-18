@@ -31,7 +31,6 @@
  */
 package org.spf4j.concurrent;
 
-import com.google.common.base.Charsets;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
@@ -40,6 +39,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,13 +54,16 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import javax.annotation.Nullable;
 import javax.annotation.WillClose;
+import javax.annotation.concurrent.ThreadSafe;
 
 /**
  * File based Lock implementation, that can be used as IPC method.
  *
  * @author zoly
  */
+@ThreadSafe
 public final class FileBasedLock implements Lock, java.io.Closeable {
 
   private static final Cache<String, FileBasedLock> FILE_LOCKS =
@@ -70,6 +73,8 @@ public final class FileBasedLock implements Lock, java.io.Closeable {
 
   private final RandomAccessFile file;
   private final ReentrantLock jvmLock;
+
+  @Nullable
   private FileLock fileLock;
 
   @SuppressFBWarnings("PREDICTABLE_RANDOM")
@@ -274,6 +279,9 @@ public final class FileBasedLock implements Lock, java.io.Closeable {
   public void unlock() {
     try {
       if (jvmLock.getHoldCount() == 1) {
+        if (fileLock == null) {
+          throw new LockRuntimeException("Cannot unlock a lock that has not been locked before.. " + jvmLock);
+        }
         fileLock.release();
       }
     } catch (IOException ex) {
@@ -308,7 +316,7 @@ public final class FileBasedLock implements Lock, java.io.Closeable {
 
   private void writeHolderInfo() throws IOException {
     file.seek(0);
-    byte[] data = getContextInfo().getBytes(Charsets.UTF_8);
+    byte[] data = getContextInfo().getBytes(StandardCharsets.UTF_8);
     file.write(data);
     file.setLength(data.length);
     file.getChannel().force(true);

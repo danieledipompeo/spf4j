@@ -1,19 +1,17 @@
 package org.spf4j.jdiff;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 
 import org.apache.commons.lang.SystemUtils;
-import org.apache.maven.artifact.Artifact;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecution;
-import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
@@ -24,6 +22,7 @@ import org.codehaus.plexus.util.cli.CommandLineUtils;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.repository.RemoteRepository;
 
+@SuppressFBWarnings("AI_ANNOTATION_ISSUES_NEEDS_NULLABLE")
 public abstract class BaseJDiffMojo
         extends AbstractMojo {
 
@@ -43,7 +42,7 @@ public abstract class BaseJDiffMojo
    * List of packages.
    */
   @Parameter(property = "includePackageNames")
-  private ArrayList<String> includePackageNames;
+  private ArrayList<String> includePackageNames = new ArrayList<>(2);
 
   @Component
   private ToolchainManager toolchainManager;
@@ -72,14 +71,6 @@ public abstract class BaseJDiffMojo
     return mavenSession;
   }
 
-  @SuppressWarnings("unchecked")
-  final Map<String, Artifact> getPluginArtifactMap() {
-    return mojoExecution.getMojoDescriptor().getPluginDescriptor().getArtifactMap();
-  }
-
-  final PluginDescriptor getPluginDescriptor() {
-    return mojoExecution.getMojoDescriptor().getPluginDescriptor();
-  }
 
   /**
    * Get the path of the Javadoc tool executable depending the user entry or try to find it depending the OS or the

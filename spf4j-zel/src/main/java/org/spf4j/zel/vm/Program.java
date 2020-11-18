@@ -31,15 +31,13 @@
  */
 package org.spf4j.zel.vm;
 
-import com.google.common.base.Charsets;
-import com.google.common.base.Function;
 import com.google.common.base.Strings;
-import com.google.common.base.Throwables;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Serializable;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -48,14 +46,16 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
+import java.util.function.Function;
 import javax.annotation.CheckReturnValue;
 import javax.annotation.Nonnegative;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.spf4j.base.CharSequences;
 import org.spf4j.base.Pair;
+import org.spf4j.base.Throwables;
+import org.spf4j.base.TimeSource;
 import org.spf4j.zel.instr.Instruction;
 import org.spf4j.zel.instr.LValRef;
 import org.spf4j.zel.instr.var.ARRAY;
@@ -64,13 +64,11 @@ import org.spf4j.zel.instr.var.INT;
 import org.spf4j.zel.instr.var.LOG;
 import org.spf4j.zel.instr.var.MAX;
 import org.spf4j.zel.instr.var.MIN;
+import org.spf4j.zel.instr.var.NVL;
 import org.spf4j.zel.instr.var.OUT;
 import org.spf4j.zel.instr.var.RANDOM;
 import org.spf4j.zel.instr.var.SQRT;
 import org.spf4j.zel.vm.ParsingContext.Location;
-import org.spf4j.zel.vm.gen.ParseException;
-import org.spf4j.zel.vm.gen.TokenMgrError;
-import org.spf4j.zel.vm.gen.ZCompiler;
 
 /**
  * <p> A ZEL program (function)</p>
@@ -84,9 +82,7 @@ import org.spf4j.zel.vm.gen.ZCompiler;
 @Immutable
 public final class Program implements Serializable {
 
-  private static final long serialVersionUID = 748365748433474932L;
-
-  private static final Logger LOGGER = LoggerFactory.getLogger(Program.class);
+  private static final long serialVersionUID = 1L;
 
   private static final MemoryBuilder ZEL_GLOBAL_FUNC;
 
@@ -106,6 +102,7 @@ public final class Program implements Serializable {
     ZEL_GLOBAL_FUNC.addSymbol("channel", Channel.Factory.INSTANCE);
     ZEL_GLOBAL_FUNC.addSymbol("EOF", Channel.EOF);
     ZEL_GLOBAL_FUNC.addSymbol("decode", DECODE.INSTANCE);
+    ZEL_GLOBAL_FUNC.addSymbol("nvl", NVL.INSTANCE);
   }
 
   public enum Type {
@@ -130,6 +127,7 @@ public final class Program implements Serializable {
   private final Map<String, Integer> localSymbolTable;
   private final Map<String, Integer> globalSymbolTable;
   private final String name;
+  private final String[] parameterNames;
 
 //CHECKSTYLE:OFF
   Program(final String name, final Map<String, Integer> globalTable, final Object[] globalMem,
@@ -153,6 +151,7 @@ public final class Program implements Serializable {
     this.debug = debug;
     this.source = source;
     this.name = name;
+    this.parameterNames = parameterNames;
   }
 
   //CHECKSTYLE:OFF
@@ -160,7 +159,7 @@ public final class Program implements Serializable {
           final Map<String, Integer> localTable,
           @Nonnull final Instruction[] instructions, final Location[] debug, final String source,
           final Type progType, final ExecutionType execType,
-          final boolean hasDeterministicFunctions) {
+          final boolean hasDeterministicFunctions, final String... parameterNames) {
     //CHECKSTYLE:ON
     this.globalMem = globalMem;
     this.instructions = instructions;
@@ -174,6 +173,7 @@ public final class Program implements Serializable {
     this.debug = debug;
     this.source = source;
     this.name = name;
+    this.parameterNames = parameterNames;
   }
 
   Location[] getDebug() {
@@ -186,6 +186,14 @@ public final class Program implements Serializable {
 
   public String getName() {
     return name;
+  }
+
+  public String[] getParameterNames() {
+    return parameterNames.clone();
+  }
+
+  String[] getParameterNamesInternal() {
+    return parameterNames.clone();
   }
 
   private static Map<String, Integer> buildLocalSymTable(final Instruction[] instructions,
@@ -270,18 +278,23 @@ public final class Program implements Serializable {
   }
 
   @CheckReturnValue
-  Object[] toArray() {
+  public Instruction[] getCode() {
     return instructions.clone();
   }
 
   @CheckReturnValue
-  public Instruction[] getCode() {
-    return Arrays.copyOf(instructions, instructions.length - 1);
+  Instruction[] getCodeInternal() {
+    return instructions;
+  }
+
+  @CheckReturnValue
+  Location[] getDebugInfoInternal() {
+    return debug;
   }
 
   @CheckReturnValue
   public Location[] getDebugInfo() {
-    return Arrays.copyOf(debug, debug.length - 1);
+    return debug.clone();
   }
 
   @CheckReturnValue
@@ -307,6 +320,22 @@ public final class Program implements Serializable {
     Program result = RefOptimizer.INSTANCE.apply(cc.getProgramBuilder().toProgram("anon@root", srcId, varNames));
     ZelFrame.annotate(srcId, result);
     return result;
+  }
+
+
+  @Nonnull
+  public static <T> ZelPredicate<T> compilePredicate(@Nonnull final CharSequence zExpr, @Nonnull final String varName)
+          throws CompileException {
+    ParsingContext cc = new CompileContext(ZEL_GLOBAL_FUNC.copy());
+    final String srcId = ZelFrame.newSource(zExpr);
+    try {
+      ZCompiler.compilePredicate(srcId, CharSequences.reader(zExpr), cc);
+    } catch (TokenMgrError | ParseException err) {
+      throw new CompileException(err);
+    }
+    Program result = RefOptimizer.INSTANCE.apply(cc.getProgramBuilder().toProgram("anon@root", srcId, varName));
+    ZelFrame.annotate(srcId, result);
+    return result.toPredicate(zExpr.toString());
   }
 
   static Program compile(@Nonnull final String zExpr,
@@ -335,6 +364,38 @@ public final class Program implements Serializable {
 
   public Object execute(final Object... args) throws ExecutionException, InterruptedException {
     return execute(ProcessIOStreams.DEFAULT, args);
+  }
+
+  public <T> ZelPredicate<T> toPredicate(final String toString) {
+    if (parameterNames.length != 1) {
+      throw new UnsupportedOperationException("Not a predicate " + this);
+    }
+    String paramName = parameterNames[0];
+    return new ZelPredicate<T>() {
+      @Override
+      public boolean test(final T arg) {
+        try {
+          return (Boolean) execute((Object) arg);
+        } catch (ExecutionException | InterruptedException ex) {
+          throw new RuntimeException(ex);
+        }
+      }
+
+      @Override
+      public String toString() {
+        return toString;
+      }
+
+      @Override
+      public String getZelExpression() {
+        return toString;
+      }
+
+      @Override
+      public String getParameterId() {
+        return paramName;
+      }
+    };
   }
 
   public Object execute(@Nonnull final ExecutorService execService,
@@ -407,13 +468,13 @@ public final class Program implements Serializable {
   }
 
   /**
-   * *
+   *
    * This allows to run ZEL in an interactive mode
    *
    * @param args
    */
+  @SuppressWarnings("checkstyle:regexp")
   public static void main(final String[] args) throws IOException, InterruptedException {
-    LOGGER.info("ZEL Shell");
     System.out.println("ZEL Shell");
     Map<String, Integer> localSymTable = Collections.emptyMap();
     Pair<Object[], Map<String, Integer>> gmemPair = ZEL_GLOBAL_FUNC.build();
@@ -421,44 +482,54 @@ public final class Program implements Serializable {
     Object[] mem = new Object[]{};
     Object[] gmem = gmemPair.getFirst();
     ResultCache resCache = new SimpleResultCache();
-    InputStreamReader inp = new InputStreamReader(System.in, Charsets.UTF_8);
+    InputStreamReader inp = new InputStreamReader(System.in, StandardCharsets.UTF_8);
     BufferedReader br = new BufferedReader(inp);
     org.spf4j.base.Runtime.queueHookAtBeginning(new Runnable() {
       @Override
       public void run() {
         terminated = true;
+        try {
+          System.in.close();
+        } catch (IOException ex) {
+          // ignore.
+        }
       }
     });
+    System.out.println("zel>\n");
     while (!terminated) {
-      System.out.print("zel>");
       String line = br.readLine();
-      if (line != null) {
-        if ("QUIT".equalsIgnoreCase(line)) {
-          terminated = true;
-        } else {
-          try {
-            final Program prog = Program.compile(line, localSymTable, gmem, globalSymTable);
-            localSymTable = prog.getLocalSymbolTable();
-            globalSymTable = prog.getGlobalSymbolTable();
-            gmem = prog.getGlobalMem();
-            long startTime = System.nanoTime();
-            Pair<Object, ExecutionContext> res = prog.execute(
-                    VMExecutor.Lazy.DEFAULT, ProcessIOStreams.DEFAULT, resCache, mem);
-            long elapsed = System.nanoTime() - startTime;
-            final Object result = res.getFirst();
-            System.out.println("result>" + result);
-            System.out.println("type>" +  (result == null ? "none" : result.getClass()));
-            System.out.println("executed in>" + elapsed + " ns");
+      if (line == null) {
+        break;
+      }
+      line = line.trim();
+      if ("QUIT".equalsIgnoreCase(line)) {
+        terminated = true;
+      } else {
+        try {
+          final Program prog = Program.compile(line, localSymTable, gmem, globalSymTable);
+          localSymTable = prog.getLocalSymbolTable();
+          globalSymTable = prog.getGlobalSymbolTable();
+          gmem = prog.getGlobalMem();
+          long startTime = TimeSource.nanoTime();
+          Pair<Object, ExecutionContext> res = prog.execute(
+                  VMExecutor.Lazy.DEFAULT, ProcessIOStreams.DEFAULT, resCache, mem);
+          long elapsed = TimeSource.nanoTime() - startTime;
+          final Object result = res.getFirst();
+          System.out.println("result> " + result);
+          System.out.println("type> " + (result == null ? "none" : result.getClass()));
+          System.out.println("executed in> " + elapsed + " ns");
 
-            final ExecutionContext execCtx = res.getSecond();
-            mem = execCtx.getMem();
-            resCache = execCtx.getResultCache();
-          } catch (CompileException ex) {
-            System.out.println("Syntax Error: " + Throwables.getStackTraceAsString(ex));
-          } catch (ExecutionException ex) {
-            System.out.println("Execution Error: " + Throwables.getStackTraceAsString(ex));
-          }
+          final ExecutionContext execCtx = res.getSecond();
+          mem = execCtx.getMem();
+          resCache = execCtx.getResultCache();
+        } catch (CompileException ex) {
+          System.err.println("Syntax Error:\n");
+          Throwables.writeTo(ex, System.err, Throwables.PackageDetail.SHORT);
+        } catch (ExecutionException ex) {
+          System.err.println("Execution Error:\n");
+          Throwables.writeTo(ex, System.err, Throwables.PackageDetail.SHORT);
         }
+        System.out.println("zel>");
       }
     }
   }
@@ -466,12 +537,13 @@ public final class Program implements Serializable {
   public String toAssemblyString() {
     StringBuilder result = new StringBuilder();
     result.append("Program: \n");
+    int toPad = Integer.toString(instructions.length).length();
     for (int i = 0; i < instructions.length; i++) {
       Object obj = instructions[i];
-      result.append(Strings.padEnd(Integer.toString(i), 8, ' '));
+      result.append(Strings.padEnd(Integer.toString(i), toPad, ' '));
       result.append(':');
       result.append(obj);
-      result.append('\n');
+      result.append(',');
     }
     result.append("execType = ").append(this.execType).append('\n');
     result.append("type = ").append(this.type).append('\n');
@@ -534,7 +606,8 @@ public final class Program implements Serializable {
     }
 
     @Override
-    @SuppressFBWarnings("TBP_TRISTATE_BOOLEAN_PATTERN")
+    @SuppressFBWarnings({ "TBP_TRISTATE_BOOLEAN_PATTERN", "NP_BOOLEAN_RETURN_NULL" })
+    @Nullable
     public Boolean apply(@Nonnull final Object input) {
       if (input.getClass() == instr) {
         return Boolean.TRUE;

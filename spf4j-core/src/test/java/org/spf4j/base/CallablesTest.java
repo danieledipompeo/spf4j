@@ -34,9 +34,12 @@ package org.spf4j.base;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
 import java.net.SocketException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spf4j.base.Callables.AdvancedAction;
 import org.spf4j.base.Callables.AdvancedRetryPredicate;
 import org.spf4j.base.Callables.TimeoutCallable;
@@ -47,6 +50,8 @@ import org.spf4j.base.Callables.TimeoutCallable;
  */
 @SuppressFBWarnings("BED_BOGUS_EXCEPTION_DECLARATION") // fb-contrib issue,re ported.
 public final class CallablesTest {
+
+  private static final Logger LOG = LoggerFactory.getLogger(CallablesTest.class);
 
   /**
    * Test exception propagation.
@@ -76,7 +81,6 @@ public final class CallablesTest {
    */
   @Test
   public void testExecuteWithRetry4args1() throws Exception {
-    System.out.println("executeWithRetry");
     Integer result = Callables.executeWithRetry(new TimeoutCallable<Integer, RuntimeException>(60000) {
       @Override
       public Integer call(final long deadline) {
@@ -91,8 +95,7 @@ public final class CallablesTest {
    */
   @Test
   public void testExecuteWithRetry4args2() throws Exception {
-    System.out.println("testExecuteWithRetry4args2");
-    long startTime = System.currentTimeMillis();
+    long startTime = TimeSource.nanoTime();
     Integer result = Callables.executeWithRetry(new TimeoutCallable<Integer, IOException>(60000) {
       private int count;
 
@@ -106,9 +109,9 @@ public final class CallablesTest {
         return 1;
       }
     }, 1, 10, IOException.class);
-    long elapsedTime = System.currentTimeMillis() - startTime;
+    long elapsedTime = TimeSource.nanoTime() - startTime;
     Assert.assertEquals(1L, result.longValue());
-    Assert.assertTrue("Operation has to take at least 10 ms", elapsedTime > 10L);
+    Assert.assertTrue("Operation has to take at least 10 ms", elapsedTime > TimeUnit.MILLISECONDS.toNanos(10));
   }
 
   @Test
@@ -133,7 +136,6 @@ public final class CallablesTest {
   @Test
   @SuppressFBWarnings("SIC_INNER_SHOULD_BE_STATIC_ANON")
   public void testSuppression() throws InterruptedException, IOException, TimeoutException  {
-    System.out.println("executeWithRetry");
     long startTime = System.currentTimeMillis();
     Integer result = Callables.executeWithRetry(new TimeoutCallable<Integer, IOException>(60000) {
       private int count;
@@ -151,10 +153,6 @@ public final class CallablesTest {
 
       @Override
       public AdvancedAction apply(final Exception input) {
-        final Throwable[] suppressed = Throwables.getSuppressed(input);
-        if (suppressed.length > 0) {
-          throw new UnsupportedOperationException();
-        }
         return AdvancedAction.RETRY;
       }
     }, IOException.class);
@@ -193,7 +191,7 @@ public final class CallablesTest {
 
       @Override
       public Integer call(final long deadline) throws IOException {
-        System.out.println("Exec at " + System.currentTimeMillis());
+        LOG.debug("Exec {}", this);
         count++;
         if (count < 200) {
           throw new SocketException("Aaaaaaaaaaa" + count);
@@ -208,19 +206,16 @@ public final class CallablesTest {
    * Test of executeWithRetry method, of class Callables.
    */
   public void testExecuteWithRetry4args3() throws Exception {
-    System.out.println("executeWithRetry");
     final CallableImpl callableImpl = new CallableImpl(60000);
     try {
       Callables.executeWithRetry(callableImpl, 3, 10, Exception.class);
       Assert.fail("this should throw a exception");
     } catch (Exception e) {
       Assert.assertEquals(11, callableImpl.getCount());
-      System.out.println("Exception as expected " + e);
     }
   }
 
   public void testExecuteWithRetry5args3() throws Exception {
-    System.out.println("executeWithRetry");
     final CallableImpl2 callableImpl = new CallableImpl2(60000);
     Callables.executeWithRetry(callableImpl, 2, 10,
             (t, deadline, callable)
@@ -233,7 +228,7 @@ public final class CallablesTest {
 
     private int count;
 
-    public CallableImpl(final int timeoutMillis) {
+    CallableImpl(final int timeoutMillis) {
       super(timeoutMillis);
     }
 
@@ -253,7 +248,7 @@ public final class CallablesTest {
 
     private int count;
 
-    public CallableImpl2(final int timeoutMillis) {
+    CallableImpl2(final int timeoutMillis) {
       super(timeoutMillis);
     }
 

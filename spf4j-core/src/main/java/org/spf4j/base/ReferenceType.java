@@ -34,37 +34,23 @@ package org.spf4j.base;
 import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
 import java.lang.ref.WeakReference;
+import java.util.function.Function;
 
-/**
- *
- * @author zoly
- */
+
 public enum ReferenceType {
 
-    WEAK(new ReferenceFactory() {
-
-        @Override
-        public Reference<Object> create(final Object object) {
-            return new WeakReference(object);
-        }
-    }),
-    SOFT(new ReferenceFactory() {
-
-        @Override
-        public Reference<Object> create(final Object object) {
-            return new SoftReference(object);
-        }
-    });
+    WEAK((Object object) -> new WeakReference<>(object)),
+    SOFT((Object object) -> new SoftReference<>(object));
 
 
-    private final ReferenceFactory factory;
+    private final Function<Object, Reference<Object>> factory;
 
-    ReferenceType(final ReferenceFactory factory) {
+    ReferenceType(final Function<Object, Reference<Object>> factory) {
         this.factory = factory;
     }
 
     public <T> Reference<T> create(final T object) {
-        return factory.create(object);
+        return (Reference<T>) factory.apply(object);
     }
 
 }

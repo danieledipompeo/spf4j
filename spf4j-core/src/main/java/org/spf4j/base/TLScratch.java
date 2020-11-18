@@ -31,6 +31,8 @@
  */
 package org.spf4j.base;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.lang.ref.Reference;
 import java.lang.ref.SoftReference;
 
 /**
@@ -39,10 +41,12 @@ import java.lang.ref.SoftReference;
  */
 public final class TLScratch {
 
-  private static final ThreadLocal<SoftReference<byte[]>> BYTES_TMP = new ThreadLocal<>();
+  private static final int MAX_LOCAL_ARRAY_SIZE = Integer.getInteger("spf4j.TLScratch.maxLocalArraySize",  256 * 1024);
 
-  private static final ThreadLocal<SoftReference<char[]>> CHARS_TMP = new ThreadLocal<>();
-  
+  private static final ThreadLocal<Reference<byte[]>> BYTES_TMP = new ThreadLocal<>();
+
+  private static final ThreadLocal<Reference<char[]>> CHARS_TMP = new ThreadLocal<>();
+
   private TLScratch() { }
 
   /**
@@ -53,7 +57,10 @@ public final class TLScratch {
    * @return - the temporary buffer.
    */
   public static byte[] getBytesTmp(final int size) {
-    SoftReference<byte[]> sr = BYTES_TMP.get();
+    if (size > MAX_LOCAL_ARRAY_SIZE) {
+      return new byte[size];
+    }
+    Reference<byte[]> sr = BYTES_TMP.get();
     byte[] result;
     if (sr == null) {
       result = new byte[size];
@@ -74,8 +81,12 @@ public final class TLScratch {
    * @param size - the minimum size of the temporary buffer requested.
    * @return - the temporary buffer.
    */
+  @SuppressFBWarnings("SUA_SUSPICIOUS_UNINITIALIZED_ARRAY")
   public static char[] getCharsTmp(final int size) {
-    SoftReference<char[]> sr = CHARS_TMP.get();
+    if (size > MAX_LOCAL_ARRAY_SIZE) {
+      return new char[size];
+    }
+    Reference<char[]> sr = CHARS_TMP.get();
     char[] result;
     if (sr == null) {
       result = new char[size];

@@ -33,7 +33,7 @@ package org.spf4j.unix;
 
 import com.sun.jna.Native;
 import java.io.IOException;
-import static org.spf4j.base.Runtime.haveJnaPlatformClib;
+import org.spf4j.base.JNA;
 
 /**
  * @author Zoltan Farkas
@@ -43,17 +43,26 @@ public final class UnixRuntime {
   private UnixRuntime() {
   }
 
+  /**
+   * Restart current process with same arguments except -Dspf4j.restart which is added/updated.
+   * @throws IOException
+   */
   public static void restart() throws IOException {
-    if (haveJnaPlatformClib()) {
-      JVMArguments current = JVMArguments.current();
-      String existing = current.removeSystemProperty("spf4j.restart");
-      int count;
-      if (existing == null) {
-        count = 1;
-      } else {
-        count = Integer.parseInt(existing) + 1;
-      }
-      current.setSystemProperty("spf4j.restart", Integer.toString(count));
+     restart(JVMArguments.current());
+  }
+
+
+  /**
+   * Restart current process.
+   * This will issue a "exec" system call after closing all existing open files.
+   * @param newArguments new process arguments. spf4j has a system property: spf4j.restart that will automatically add
+   * or update to indicate a process was restarted and how many times.
+   * @throws IOException
+   */
+  public static void restart(final JVMArguments newArguments) throws IOException {
+    if (JNA.haveJnaPlatformClib()) {
+      newArguments.createOrUpdateSystemProperty("spf4j.restart",
+              (old) -> old == null ? "1" :  Integer.toString(Integer.parseInt(old) + 1));
       // close all files upon exec, except stdin, stdout, and stderr
       int sz = CLibrary.INSTANCE.getdtablesize();
       for (int i = 3; i < sz; i++) {
@@ -65,8 +74,8 @@ public final class UnixRuntime {
       }
 
       // exec to self
-      String exe = current.getExecutable();
-      CLibrary.INSTANCE.execvp(exe, current.toStringArray());
+      String exe = newArguments.getExecutable();
+      CLibrary.INSTANCE.execvp(exe, newArguments.toStringArray());
       throw new IOException("Failed to exec '" + exe + "' " + CLibrary.INSTANCE.strerror(Native.getLastError()));
 
     } else {

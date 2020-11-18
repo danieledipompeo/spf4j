@@ -31,12 +31,20 @@
  */
 package org.spf4j.ssdump2;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import org.hamcrest.Matchers;
 import org.junit.Assert;
 import org.junit.Test;
-import org.spf4j.ssdump2.avro.ASample;
-import org.spf4j.base.Method;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.base.Methods;
+import org.spf4j.base.avro.Converters;
+import org.spf4j.base.avro.StackSampleElement;
 import org.spf4j.stackmonitor.SampleNode;
 
 /**
@@ -44,6 +52,8 @@ import org.spf4j.stackmonitor.SampleNode;
  * @author zoly
  */
 public class ConverterTest {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ConverterTest.class);
 
     private SampleNode testSample() {
          StackTraceElement[] st1 = new StackTraceElement[3];
@@ -72,15 +82,43 @@ public class ConverterTest {
 
 
     @Test
+    public void testSaveLoad() throws IOException {
+      File test = File.createTempFile("test", ".ssdumnp3");
+      SampleNode testSample = testSample();
+      Map<String, SampleNode> dumps = new HashMap<>(4);
+      dumps.put("zero", null);
+      dumps.put("something", testSample);
+      Converter.saveLabeledDumps(test, dumps);
+      Map<String, SampleNode> loadLabeledDumps = Converter.loadLabeledDumps(test);
+      Assert.assertEquals(testSample, loadLabeledDumps.get("something"));
+    }
+
+     @Test
     public void test() {
         SampleNode testSample = testSample();
-        final List<ASample> samples = new ArrayList<>();
-        Converter.convert(Method.ROOT, testSample, -1, 0, (final ASample object, final long deadline) -> {
-          samples.add(object);
-        });
+        final List<StackSampleElement> samples = new ArrayList<>();
+        Converters.convert(Methods.ROOT, testSample, -1, 0,  samples::add);
         SampleNode back = Converter.convert(samples.iterator());
-        System.out.println(back);
-        Assert.assertEquals(testSample.toString(), back.toString());
+        Assert.assertEquals(testSample, back);
     }
+
+
+    @Test
+    public void testLoad() throws IOException {
+      Map<String, SampleNode> labeledDumps
+              = Converter.loadLabeledDumps(new File("./src/test/resources/test.ssdump3"));
+      Assert.assertNotNull(labeledDumps);
+      LOG.debug("dumps", labeledDumps);
+      Assert.assertThat(labeledDumps.toString(),
+              Matchers.containsString("getUnchecked@org.spf4j.concurrent.UnboundedLoadingCache"));
+
+    }
+
+    @Test
+    public void testNameUtils() {
+      String fileName = Converter.createLabeledSsdump2FileName("base", "bla_");
+      Assert.assertEquals("bla_", Converter.getLabelFromSsdump2FileName(fileName));
+    }
+
 
 }

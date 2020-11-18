@@ -32,17 +32,18 @@
 package org.spf4j.perf.impl.chart;
 
 import java.io.Serializable;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
 import org.jfree.chart.axis.TickUnits;
 import org.jfree.data.DomainOrder;
 import org.jfree.data.general.DatasetChangeListener;
 import org.jfree.data.general.DatasetGroup;
 import org.jfree.data.xy.XYZDataset;
-import org.joda.time.format.DateTimeFormatter;
-import org.joda.time.format.ISODateTimeFormat;
 import org.spf4j.base.Arrays;
 import org.spf4j.base.ComparablePair;
 import org.spf4j.perf.impl.Quanta;
@@ -174,6 +175,7 @@ public final class QuantizedXYZDatasetImpl implements XYZDataset, Serializable {
   }
 
   @Override
+  @Nullable
   public DatasetGroup getGroup() {
     return null;
   }
@@ -200,10 +202,13 @@ public final class QuantizedXYZDatasetImpl implements XYZDataset, Serializable {
     if (data.length == 0) {
       return tux;
     }
-
-    final DateTimeFormatter formatter = ISODateTimeFormat.dateHourMinuteSecond();
-    final DateTimeFormatter shortFormat = ISODateTimeFormat.dateHour();
-    final DateTimeFormatter mediumFormat = ISODateTimeFormat.dateHourMinute();
+    ZoneId systemDefault = ZoneId.systemDefault();
+    final DateTimeFormatter formatter = DateTimeFormatter
+          .ofPattern("yyyyMMdd'T'HH:mm:ss").withZone(systemDefault);
+    final DateTimeFormatter shortFormat = DateTimeFormatter
+          .ofPattern("yyyyMMdd'T'HH").withZone(systemDefault);
+    final DateTimeFormatter mediumFormat = DateTimeFormatter
+          .ofPattern("yyyyMMdd'T'HH:mm").withZone(systemDefault);
     final long[] timestamps = new long[data[0].length];
     long time = startTimeMillis;
     for (int i = 0; i < timestamps.length; i++) {

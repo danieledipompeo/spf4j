@@ -49,7 +49,10 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Objects;
+import java.util.function.Function;
+import javax.annotation.Nullable;
 import org.spf4j.base.Runtime;
 import org.spf4j.unix.CLibrary.FILE;
 
@@ -63,7 +66,7 @@ public final class JVMArguments {
   private final List<String> arguments;
 
   public JVMArguments(final int size) {
-    this(new ArrayList<>(size));
+    arguments = new ArrayList<>(size);
   }
 
   public JVMArguments(final Collection<? extends String> c) {
@@ -74,23 +77,101 @@ public final class JVMArguments {
     return arguments.get(0);
   }
 
+  /**
+   * Removes the first System property.
+   * @param pname the name of the system property to remove.
+   * @return the value of the removed system property. or null if there is no such property.
+   */
+  @Nullable
   public String removeSystemProperty(final String pname) {
-    String name = "-D" + pname;
-    String nameeq = name + '=';
-    for (Iterator<String> itr = arguments.iterator(); itr.hasNext();) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next(); // skip command.
+    int nl = pname.length();
+    while (itr.hasNext()) {
       String s = itr.next();
-      if (s.equals(name) || s.startsWith(nameeq)) {
-        itr.remove();
-        return s.substring(nameeq.length());
+      if (s.startsWith("-D") && s.regionMatches(2, pname, 0, nl)) {
+        int l = nl + 2;
+        if (s.length() == l) {
+          itr.remove();
+          return "";
+        } else if (s.charAt(l) == '=') {
+          itr.remove();
+          return s.substring(l + 1);
+        }
       }
     }
     return null;
   }
 
+  @Nullable
+  public String getSystemProperty(final String pname) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next(); // skip command.
+    int nl = pname.length();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.startsWith("-D") && s.regionMatches(2, pname, 0, nl)) {
+        int l = nl + 2;
+        if (s.length() == l) {
+          return "";
+        } else if (s.charAt(l) == '=') {
+          return s.substring(l + 1);
+        }
+      }
+    }
+    return null;
+  }
+
+  @Nullable
+  public void createOrUpdateSystemProperty(final String pname, final Function<String, String> replacer) {
+    ListIterator<String> itr = arguments.listIterator();
+    itr.next(); // skip command.
+    int nl = pname.length();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.startsWith("-D") && s.regionMatches(2, pname, 0, nl)) {
+        int l = nl + 2;
+        if (s.length() == l) {
+          itr.set("-D" + pname + '=' + replacer.apply(""));
+          return;
+        } else if (s.charAt(l) == '=') {
+          itr.set("-D" + pname + '=' + replacer.apply(s.substring(l + 1)));
+          return;
+        }
+      }
+    }
+    arguments.add(1, "-D" + pname + '=' + replacer.apply(null));
+  }
+
+
+  public boolean hasSystemProperty(final String pname) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next(); // skip command.
+    int nl = pname.length();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.startsWith("-D") && s.regionMatches(2, pname, 0, nl)) {
+        int l = nl + 2;
+        if (s.length() == l) {
+          return true;
+        } else if (s.charAt(l) == '=') {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  /**
+   * remove all system properties starting with a prefix.
+   * @param pname the prefix
+   * @return number of system properties removed.
+   */
   public int removeAllSystemPropertiesStartingWith(final String pname) {
     String name = "-D" + pname;
     int nrRemoved = 0;
-    for (Iterator<String> itr = arguments.iterator(); itr.hasNext();) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next();
+    while (itr.hasNext()) {
       String s = itr.next();
       if (s.startsWith(name)) {
         itr.remove();
@@ -105,6 +186,63 @@ public final class JVMArguments {
     // index 0 is the executable name
     arguments.add(1, "-D" + name + '=' + value);
   }
+
+  public void setVMArgument(final String argument) {
+    if (!hasVMArgument(argument)) {
+      arguments.add(1, argument);
+    }
+  }
+
+  public boolean removeVMArgument(final String argument) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.equals(argument)) {
+        itr.remove();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public boolean removeVMArgumentStartingWith(final String argument) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.startsWith(argument)) {
+        itr.remove();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public boolean hasVMArgument(final String argument) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.equals(argument)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public boolean hasVMArgumentStartingWith(final String argumentPrefix) {
+    Iterator<String> itr = arguments.iterator();
+    itr.next();
+    while (itr.hasNext()) {
+      String s = itr.next();
+      if (s.startsWith(argumentPrefix)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
 
   public void add(final String arg) {
     arguments.add(arg);
@@ -438,13 +576,13 @@ public final class JVMArguments {
       this.sizeOfInt = sizeOfInt;
     }
 
-    int readInt() {
+    private int readInt() {
       int r = getInt(offset);
       offset += sizeOfInt;
       return r;
     }
 
-    String readString() {
+    private String readString() {
       ByteArrayOutputStream baos = new ByteArrayOutputStream();
       byte ch;
       while ((ch = getByte(offset++)) != '\0') {

@@ -31,6 +31,7 @@
  */
 package org.spf4j.jmx.mappers;
 
+import com.google.common.collect.Maps;
 import com.google.common.reflect.TypeToken;
 import com.sun.jmx.mbeanserver.MXBeanMapping;
 import com.sun.jmx.mbeanserver.MXBeanMappingFactory;
@@ -47,7 +48,6 @@ import java.util.Set;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
@@ -79,16 +79,14 @@ abstract class Spf4jJMXBeanMapping implements JMXBeanMapping {
   private static final Type[] STR_STR_TYPES = {String.class, String.class};
 
 
-  private boolean isBasicType;
   protected OpenType<?> openType;
   protected Class<?> mappedTypeClass;
 
   Spf4jJMXBeanMapping() {
-    this(false, null, null);
+    this(null, null);
   }
 
-  Spf4jJMXBeanMapping(final boolean isBasicType, final OpenType<?> openType, final Class<?> mappedTypeClass) {
-    this.isBasicType = isBasicType;
+  Spf4jJMXBeanMapping(final OpenType<?> openType, final Class<?> mappedTypeClass) {
     this.openType = openType;
     this.mappedTypeClass = mappedTypeClass;
   }
@@ -151,7 +149,7 @@ abstract class Spf4jJMXBeanMapping implements JMXBeanMapping {
    static class BasicMXBeanType extends Spf4jJMXBeanMapping {
 
     BasicMXBeanType(final Class<?> c, final OpenType<?> openType) {
-      super(true, openType, c);
+      super(openType, c);
     }
 
     @Override
@@ -179,10 +177,10 @@ abstract class Spf4jJMXBeanMapping implements JMXBeanMapping {
    */
    static class EnumMXBeanType extends Spf4jJMXBeanMapping {
 
-    final Class enumClass;
+    private final Class enumClass;
 
     EnumMXBeanType(final Class<?> c) {
-      super(false, STRING, String.class);
+      super(STRING, String.class);
       this.enumClass = c;
     }
 
@@ -547,7 +545,7 @@ abstract class Spf4jJMXBeanMapping implements JMXBeanMapping {
       final TabularData td = (TabularData) data;
       Map<Object, Object> result;
       if (rawType.isInterface()) {
-        result = new HashMap<>(td.values().size());
+        result = Maps.newHashMapWithExpectedSize(td.values().size());
       } else {
         try {
           result = (Map) rawType.newInstance();

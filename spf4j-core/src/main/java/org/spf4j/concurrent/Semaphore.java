@@ -31,70 +31,16 @@
  */
 package org.spf4j.concurrent;
 
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import javax.annotation.CheckReturnValue;
 import javax.annotation.ParametersAreNonnullByDefault;
+import javax.annotation.concurrent.ThreadSafe;
 
 /**
  * A interface that abstracts a semaphore.
  * @author zoly
  */
 @ParametersAreNonnullByDefault
-public interface Semaphore {
-
-  /**
-   * Acquire one permit.
-   * @param timeout  time to wait for permit to become available.
-   * @param unit  units of time.
-   * @throws InterruptedException - operation interrupted.
-   * @throws TimeoutException - timed out.
-   */
-  default void acquire(final long timeout, final TimeUnit unit)
-          throws InterruptedException, TimeoutException {
-    acquire(1, timeout, unit);
-  }
-
-
-  /**
-   * Acquire a arbitrary number of permits.
-   * @param nrPermits - numer of permits to acquire.
-   * @param timeout - time to wait for permit to become available.
-   * @param unit - units of time.
-   * @throws InterruptedException - operation interrupted.
-   * @throws TimeoutException - timed out.
-   */
-  default void acquire(final int nrPermits, final long timeout, final TimeUnit unit)
-          throws InterruptedException, TimeoutException {
-    if (!tryAcquire(nrPermits, timeout, unit)) {
-      throw new TimeoutException("Cannot acquire timeout after " + timeout + " " + unit);
-    }
-  }
-
-  /**
-   * try to acquire a permit.
-   * @param timeout  time to wait for permit to become available.
-   * @param unit  units of time.
-   * @return  true if permit acquired, false if timed out.
-   * @throws InterruptedException - operation interrupted.
-   */
-  @CheckReturnValue
-  default boolean tryAcquire(final long timeout, final TimeUnit unit)
-          throws InterruptedException {
-    return tryAcquire(1, timeout, unit);
-  };
-
-  /**
-   * try to acquire a number of permits.
-   * @param nrPermits  number of permits to acquire.
-   * @param timeout  time to wait for permits to become available.
-   * @param unit  units of time.
-   * @return  true if permits acquired, false if timed out.
-   * @throws InterruptedException - operation interrupted.
-   */
-  @CheckReturnValue
-  boolean tryAcquire(int nrPermits, long timeout, TimeUnit unit)
-          throws InterruptedException;
+@ThreadSafe
+public interface Semaphore extends PermitSupplier {
 
   /**
    * release 1 permit.
@@ -108,5 +54,10 @@ public interface Semaphore {
    * @param nrPermits  the number of permits to release.
    */
   void release(int nrPermits);
+
+  @Override
+  default Semaphore toSemaphore() {
+    return this;
+  }
 
 }

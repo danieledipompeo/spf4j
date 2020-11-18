@@ -32,15 +32,22 @@
 package org.spf4j.io.csv;
 
 import java.io.IOException;
+import java.util.Iterator;
+import java.util.function.Consumer;
+import javax.annotation.Nonnull;
 
 /**
  * Char separated value file Reader.
+ * A newly created reader will initially be positioned at START_DOCUMENT. (current())
+ * A example Token sequence will be:
+ * START_DOCUMENT, ELEMENT, ELEMENT, END_ROW, ELEMENT, ELEMENT, END_ROW, END_DOCUMENT
+ *
  * @author zoly
  */
 public interface CsvReader {
 
   enum TokenType {
-    ELEMENT, END_ROW, END_DOCUMENT
+     START_DOCUMENT, ELEMENT, END_ROW, END_DOCUMENT
   }
 
   /**
@@ -49,7 +56,16 @@ public interface CsvReader {
    * @return return CSV element type.
    * @throws IOException exception is something goes wrong.
    */
+  @Nonnull
   TokenType next() throws IOException, CsvParseException;
+
+  /**
+   * @return the currently parsed token type,  null if no current token is available (next has never been called)
+   * @throws IOException
+   * @throws CsvParseException
+   */
+  @Nonnull
+  TokenType current();
 
   /**
    * the CSV element string. the underlying instance is reused, so you will need to make a copy of this if planning to
@@ -59,4 +75,46 @@ public interface CsvReader {
    */
   CharSequence getElement();
 
+  /**
+   * Current CSV line number.
+   * @return
+   */
+  long currentLineNumber();
+
+  default int skipRow() throws IOException, CsvParseException {
+    int skipped = 0;
+    TokenType current = current();
+    if (current == TokenType.START_DOCUMENT) { // beginning of file.
+      next();
+    }
+    while ((current = current()) != CsvReader.TokenType.END_ROW
+            && current != CsvReader.TokenType.END_DOCUMENT) {
+      next();
+      skipped++;
+    }
+    if (current != CsvReader.TokenType.END_DOCUMENT) {
+      next();
+    }
+    return skipped;
+  }
+
+  default void readRow(final Consumer<CharSequence> consumer) throws IOException, CsvParseException {
+    TokenType current = current();
+    if (current == TokenType.START_DOCUMENT) { // beginning of file.
+      next();
+    }
+    while ((current = current()) != CsvReader.TokenType.END_ROW
+            && current != CsvReader.TokenType.END_DOCUMENT) {
+      consumer.accept(getElement());
+      next();
+    }
+    if (current != CsvReader.TokenType.END_DOCUMENT) {
+      next();
+    }
+  }
+
+
+  static CsvReader toReader(final Iterator<? extends CharSequence> it) {
+    return new IterableCsvReader(it);
+  }
 }

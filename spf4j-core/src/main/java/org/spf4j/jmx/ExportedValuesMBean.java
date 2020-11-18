@@ -35,9 +35,10 @@ package org.spf4j.jmx;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Arrays;
 import java.io.InvalidObjectException;
-import java.lang.reflect.Type;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.regex.Pattern;
 import javax.management.Attribute;
 import javax.management.AttributeList;
@@ -53,19 +54,14 @@ import javax.management.MBeanOperationInfo;
 import javax.management.MBeanParameterInfo;
 import javax.management.MalformedObjectNameException;
 import javax.management.ObjectName;
+import javax.management.ReflectionException;
 import javax.management.openmbean.OpenDataException;
-import javax.management.openmbean.OpenMBeanAttributeInfoSupport;
 import javax.management.openmbean.OpenType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.spf4j.base.Reflections;
-import org.spf4j.base.Throwables;
 
 // We att the ex history to the message string, since the client is not required to have the exception classes
-@SuppressFBWarnings("LEST_LOST_EXCEPTION_STACK_TRACE")
+@SuppressFBWarnings("FCCD_FIND_CLASS_CIRCULAR_DEPENDENCY")
 final class ExportedValuesMBean implements DynamicMBean {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ExportedValuesMBean.class);
 
   private static final Pattern INVALID_CHARS = Pattern.compile("[^a-zA-Z0-9_\\-\\.]");
 
@@ -147,16 +143,19 @@ final class ExportedValuesMBean implements DynamicMBean {
    * {@inheritDoc}
    */
   @Override
-  public Object getAttribute(final String name) throws AttributeNotFoundException, MBeanException {
+  public Object getAttribute(final String name) throws AttributeNotFoundException, MBeanException, ReflectionException {
     ExportedValue<?> result = exportedValues.get(name);
     if (result == null) {
       throw new AttributeNotFoundException(name);
     }
     try {
       return result.get();
+    } catch (SecurityException ex) {
+      throw ex;
     } catch (OpenDataException | RuntimeException ex) {
-      LOG.error("Exception while getting attr {}", name, ex);
-      throw new MBeanException(null, "Error getting attribute" + name + " detail:\n" + Throwables.toString(ex));
+      Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.SEVERE,
+              "Exception while getting attr: " + name, ex);
+      throw new MBeanException(ex, "Error getting attribute" + name);
     }
   }
 
@@ -165,7 +164,7 @@ final class ExportedValuesMBean implements DynamicMBean {
    */
   @Override
   public void setAttribute(final Attribute attribute)
-          throws AttributeNotFoundException, InvalidAttributeValueException {
+          throws AttributeNotFoundException, InvalidAttributeValueException, MBeanException, ReflectionException {
     String name = attribute.getName();
     ExportedValue<Object> result = (ExportedValue<Object>) exportedValues.get(name);
     if (result == null) {
@@ -173,10 +172,14 @@ final class ExportedValuesMBean implements DynamicMBean {
     }
     try {
       result.set(attribute.getValue());
+    } catch (SecurityException ex) {
+      throw ex;
     } catch (InvalidObjectException | RuntimeException ex) {
-      LOG.warn("Exception while setting attr {}", attribute, ex);
-      throw new InvalidAttributeValueException("Invalid value " + attribute
-              + " detail:\n" + Throwables.toString(ex));
+      Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.SEVERE,
+              "Exception while setting attr: " + attribute, ex);
+      InvalidAttributeValueException jx = new InvalidAttributeValueException("Invalid value " + attribute);
+      jx.addSuppressed(ex);
+      throw jx;
     }
   }
 
@@ -193,10 +196,15 @@ final class ExportedValuesMBean implements DynamicMBean {
           throw new IllegalArgumentException("No attribute with name " + name);
         }
         list.add(new Attribute(name, attr.get()));
-      } catch (OpenDataException | RuntimeException ex) {
-          LOG.error("Exception getting attribute {}", name, ex);
-          throw new JMRuntimeException("Exception while getting attributes " + Arrays.toString(names) + ", detail:\n"
-                  + Throwables.toString(ex));
+      } catch (OpenDataException | MBeanException | ReflectionException | RuntimeException ex) {
+          Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.SEVERE,
+                  "Exception getting attribute {0}", name);
+          Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.SEVERE,
+              "Exception detail", ex);
+          JMRuntimeException jx = new JMRuntimeException("Exception while getting attributes "
+                + Arrays.toString(names));
+          jx.addSuppressed(ex);
+          throw jx;
       }
     }
     return list;
@@ -214,10 +222,15 @@ final class ExportedValuesMBean implements DynamicMBean {
         try {
           eval.set(attr.getValue());
           result.add(attr);
-        } catch (InvalidAttributeValueException | InvalidObjectException | RuntimeException ex) {
-            LOG.warn("Exception while setting attr {}", attr, ex);
-            throw new JMRuntimeException("Exception while setting attributes " + list + ", detail:\n"
-                    + Throwables.toString(ex));
+        } catch (AttributeNotFoundException | InvalidAttributeValueException | MBeanException | ReflectionException
+                | InvalidObjectException | RuntimeException ex) {
+          Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.WARNING,
+                  "Exception while setting attr {}", attr);
+          Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.WARNING,
+              "Exception detail", ex);
+          JMRuntimeException jx = new JMRuntimeException("Exception while setting attributes " + list);
+          jx.addSuppressed(ex);
+          throw jx;
         }
       }
     }
@@ -228,13 +241,16 @@ final class ExportedValuesMBean implements DynamicMBean {
    * {@inheritDoc}
    */
   @Override
-  public Object invoke(final String name, final Object[] args, final String[] sig) throws MBeanException {
+  public Object invoke(final String name, final Object[] args, final String[] sig)
+          throws MBeanException, ReflectionException {
     try {
       return exportedOperations.get(name).invoke(args);
     } catch (OpenDataException | InvalidObjectException | RuntimeException ex) {
-      LOG.warn("Exception while invoking operation {}({})", name, args, ex);
-      throw new MBeanException(null, "Exception invoking" + name + " with " +  Arrays.toString(args) + ", detail:\n"
-              + Throwables.toString(ex));
+      Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.WARNING,
+              "Exception while invoking operation {0}({1})", new Object[] {name, args});
+      Logger.getLogger(ExportedValuesMBean.class.getName()).log(Level.WARNING,
+              "Exception detail", ex);
+      throw new MBeanException(ex, "Exception invoking " + name + " with " +  Arrays.toString(args));
     }
   }
 
@@ -250,7 +266,7 @@ final class ExportedValuesMBean implements DynamicMBean {
     try {
       final String sanitizedDomain = INVALID_CHARS.matcher(domain).replaceAll("_");
       final String sanitizedName = INVALID_CHARS.matcher(name).replaceAll("_");
-      StringBuilder builder = new StringBuilder();
+      StringBuilder builder = new StringBuilder(domain.length() + name.length() + 6);
       builder.append(sanitizedDomain).append(':');
       builder.append("name=").append(sanitizedName);
       return new ObjectName(builder.toString());
@@ -263,7 +279,7 @@ final class ExportedValuesMBean implements DynamicMBean {
     MBeanAttributeInfo[] attrs = new MBeanAttributeInfo[exportedValues.size()];
     int i = 0;
     for (ExportedValue<?> val : exportedValues.values()) {
-      attrs[i++] = createAttributeInfo(val);
+      attrs[i++] = val.toAttributeInfo();
     }
     MBeanOperationInfo[] operations = new MBeanOperationInfo[exportedOperations.size()];
     i = 0;
@@ -281,33 +297,6 @@ final class ExportedValuesMBean implements DynamicMBean {
     }
     return new MBeanInfo(objectName.toString(), "spf4j exported",
             attrs, null, operations, null);
-  }
-
-  private static MBeanAttributeInfo createAttributeInfo(final ExportedValue<?> val) {
-    final Type oClass = val.getValueType();
-    Class<?> valClass = oClass instanceof Class ? Reflections.primitiveToWrapper((Class) oClass) : null;
-    OpenType openType = val.getValueOpenType();
-    String description = val.getDescription();
-    if (description == null || description.isEmpty()) {
-      description = val.getName();
-    }
-    if (openType != null) {
-      try {
-        return new OpenMBeanAttributeInfoSupport(val.getName(), description,
-            openType, true, val.isWriteable(), valClass == Boolean.class);
-      } catch (IllegalArgumentException ex) {
-        throw new IllegalArgumentException("Cannot export " + val, ex);
-      }
-    } else {
-       return new MBeanAttributeInfo(
-            val.getName(),
-            oClass.getTypeName(),
-            val.getDescription(),
-            true, // isReadable
-            val.isWriteable(), // isWritable
-            valClass == Boolean.class);
-    }
-
   }
 
   @Override

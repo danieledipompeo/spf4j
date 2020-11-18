@@ -35,6 +35,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.concurrent.Callable;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.spf4j.log.Level;
+import org.spf4j.test.log.LogAssert;
+import org.spf4j.test.log.TestLoggers;
+import org.spf4j.test.matchers.LogMatchers;
 
 /**
  *
@@ -43,28 +49,31 @@ import org.junit.Test;
 @SuppressFBWarnings("SIC_INNER_SHOULD_BE_STATIC_ANON")
 public final class PerformanceMonitorTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(PerformanceMonitorTest.class);
 
+  @Test
+  public void testSomeMethod() throws Exception {
+    LogAssert expect = TestLoggers.sys().expect("org.spf4j.perf.PerformanceMonitor",
+            Level.ERROR,
+            LogMatchers.hasFormat("Execution time  {} ms for {} exceeds error threshold of {} ms, detail: {}"));
+    String result = PerformanceMonitor.callAndMonitor(
+            1, 2, new Callable<String>() {
 
-    @Test
-    public void testSomeMethod() throws Exception {
-        String result = PerformanceMonitor.callAndMonitor(
-                1, 2, new Callable<String>() {
+      @Override
+      @SuppressFBWarnings("MDM_THREAD_YIELD")
+      public String call() throws Exception {
+        LOG.debug("testing");
+        Thread.sleep(3);
+        return "test";
+      }
 
-            @Override
-            @SuppressFBWarnings("MDM_THREAD_YIELD")
-            public String call() throws Exception {
-                System.out.println("testing");
-                Thread.sleep(3);
-                return "test";
-            }
+      @Override
+      public String toString() {
+        return "test";
+      }
 
-            @Override
-            public String toString() {
-                return "test";
-            }
-
-        });
-        // TODO assert logging, will need to create my test logger component...
-        Assert.assertEquals("test", result);
-    }
+    });
+    Assert.assertEquals("test", result);
+    expect.assertObservation();
+  }
 }

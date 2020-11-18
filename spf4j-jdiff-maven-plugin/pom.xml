@@ -5,7 +5,7 @@
   <parent>
     <artifactId>spf4j</artifactId>
     <groupId>org.spf4j</groupId>
-    <version>8.3.14-SNAPSHOT</version>
+    <version>8.8.6-SNAPSHOT</version>
   </parent>
 
   <artifactId>spf4j-jdiff-maven-plugin</artifactId>
@@ -16,12 +16,8 @@
     The JDiff Maven Plugin generates a JavaDoc report based on the differences
     between sources of two versions of a project.
   </description>
-
-
   <properties>
-    <mojo.java.target>1.8</mojo.java.target>
-    <mavenVersion>3.3.9</mavenVersion>
-    <aetherVersion>1.1.0</aetherVersion>
+    <jacoco.method.ratio>0.3</jacoco.method.ratio>
   </properties>
 
   <build>
@@ -29,7 +25,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-plugin-plugin</artifactId>
-        <version>3.4</version>
+        <version>${maven-plugin-plugin.version}</version>
         <executions>
           <execution>
             <id>mojo-descriptor</id>
@@ -40,8 +36,16 @@
         </executions>
         <configuration>
           <!-- see http://jira.codehaus.org/browse/MNG-5346 -->
+          <goalPrefix>spf4j-jdiff</goalPrefix>
           <skipErrorNoDescriptorsFound>true</skipErrorNoDescriptorsFound>
         </configuration>
+        <dependencies>
+          <dependency>
+              <groupId>com.thoughtworks.qdox</groupId>
+              <artifactId>qdox</artifactId>
+              <version>2.0-M9</version>
+          </dependency>
+        </dependencies>
       </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -76,8 +80,8 @@
       </plugin>
 
       <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>findbugs-maven-plugin</artifactId>
+        <groupId>com.github.spotbugs</groupId>
+        <artifactId>spotbugs-maven-plugin</artifactId>
       </plugin>
 
       <plugin>
@@ -88,10 +92,68 @@
         <groupId>org.jacoco</groupId>
         <artifactId>jacoco-maven-plugin</artifactId>
       </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <properties>
+            <property>
+              <name>listener</name>
+              <value>org.spf4j.test.log.junit4.DetailOnFailureRunListener</value>
+            </property>
+          </properties>
+        </configuration>
+      </plugin>
+
     </plugins>
+    <pluginManagement>
+      <plugins>
+        <!--This plugin's configuration is used to store Eclipse m2e settings only. It has no influence on the Maven build itself.-->
+        <plugin>
+          <groupId>org.eclipse.m2e</groupId>
+          <artifactId>lifecycle-mapping</artifactId>
+          <version>1.0.0</version>
+          <configuration>
+            <lifecycleMappingMetadata>
+              <pluginExecutions>
+                <pluginExecution>
+                  <pluginExecutionFilter>
+                    <groupId>
+                      org.apache.maven.plugins
+                    </groupId>
+                    <artifactId>
+                      maven-plugin-plugin
+                    </artifactId>
+                    <versionRange>[3.4,)</versionRange>
+                    <goals>
+                      <goal>descriptor</goal>
+                    </goals>
+                  </pluginExecutionFilter>
+                  <action>
+                    <ignore />
+                  </action>
+                </pluginExecution>
+              </pluginExecutions>
+            </lifecycleMappingMetadata>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
   </build>
   
   <dependencies>
+    <dependency>
+      <groupId>org.spf4j</groupId>
+      <artifactId>spf4j-slf4j-test</artifactId>
+      <scope>test</scope>
+      <version>${project.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.spf4j</groupId>
+      <artifactId>spf4j-aether</artifactId>
+      <version>${project.version}</version>
+    </dependency>
     <dependency>
       <groupId>com.google.code.findbugs</groupId>
       <artifactId>findbugs-annotations</artifactId>
@@ -106,34 +168,34 @@
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-core</artifactId>
-      <version>${mavenVersion}</version>
+      <version>${mavenPluginApi.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-model</artifactId>
-      <version>${mavenVersion}</version>
+      <version>${mavenPluginApi.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-artifact</artifactId>
-      <version>${mavenVersion}</version>
+      <version>${mavenPluginApi.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.maven</groupId>
       <artifactId>maven-plugin-api</artifactId>
-      <version>${mavenVersion}</version>
+      <version>${mavenPluginApi.version}</version>
     </dependency>
     <!-- MavenReport -->
     <dependency>
       <groupId>org.apache.maven.plugin-tools</groupId>
       <artifactId>maven-plugin-annotations</artifactId>
-      <version>3.4</version>
+      <version>${mavenPluginAnnotations.version}</version>
       <scope>provided</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.maven.reporting</groupId>
       <artifactId>maven-reporting-impl</artifactId>
-      <version>2.4</version>
+      <version>3.0.0</version>
     </dependency>
     <!-- JDiff Runtime -->
     <dependency>
@@ -145,38 +207,13 @@
     <dependency>
       <groupId>xerces</groupId>
       <artifactId>xercesImpl</artifactId>
-      <version>2.10.0</version>
+      <version>2.12.0</version>
       <scope>runtime</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-aether-provider</artifactId>
-      <version>${mavenVersion}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.aether</groupId>
-      <artifactId>aether-impl</artifactId>
-      <version>${aetherVersion}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.aether</groupId>
-      <artifactId>aether-connector-basic</artifactId>
-      <version>${aetherVersion}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.aether</groupId>
-      <artifactId>aether-transport-file</artifactId>
-      <version>${aetherVersion}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.eclipse.aether</groupId>
-      <artifactId>aether-transport-http</artifactId>
-      <version>${aetherVersion}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.httpcomponents</groupId>
       <artifactId>httpclient</artifactId>
-      <version>4.5.1</version>
+      <version>4.5.6</version>
     </dependency>
     <dependency>
       <groupId>args4j</groupId>
@@ -191,12 +228,6 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
-      <scope>test</scope>
-      <version>${slf4j.version}</version>
-    </dependency>
   </dependencies>
 
   <reporting>
@@ -204,7 +235,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-plugin-plugin</artifactId>
-        <version>3.4</version>
+        <version>${maven-plugin-plugin.version}</version>
       </plugin>
     </plugins>
   </reporting>

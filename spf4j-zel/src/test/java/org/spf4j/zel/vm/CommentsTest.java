@@ -31,12 +31,14 @@
  */
 package org.spf4j.zel.vm;
 
-import com.google.common.base.Charsets;
 import com.google.common.io.Resources;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutionException;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  *
@@ -44,16 +46,16 @@ import org.junit.Test;
  */
 public final class CommentsTest {
 
+  private static final Logger LOG = LoggerFactory.getLogger(CommentsTest.class);
 
-    @Test
-    public void testEx() throws CompileException, ExecutionException, InterruptedException, IOException {
-        String ctest = Resources.toString(Resources.getResource(CommentsTest.class, "comments.zel"),
-                Charsets.US_ASCII);
-        Program p = Program.compile(ctest);
-        System.out.println(p);
-        Integer result = (Integer) p.execute();
-        Assert.assertEquals(1, result.intValue());
-    }
-
+  @Test
+  public void testEx() throws CompileException, ExecutionException, InterruptedException, IOException {
+    String ctest = Resources.toString(Resources.getResource(CommentsTest.class, "comments.zel"),
+            StandardCharsets.US_ASCII);
+    Program p = Program.compile(ctest);
+    LOG.debug("Program = {}", p);
+    Integer result = (Integer) p.execute();
+    Assert.assertEquals(1, result.intValue());
+  }
 
 }

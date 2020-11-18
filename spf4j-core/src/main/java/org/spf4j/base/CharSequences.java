@@ -32,12 +32,16 @@
 package org.spf4j.base;
 
 import com.google.common.annotations.GwtCompatible;
+import com.google.common.annotations.GwtIncompatible;
+import com.google.common.io.CharSource;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.IOException;
+import java.io.Reader;
 import java.io.UncheckedIOException;
 import static java.lang.Math.min;
+import java.util.function.IntPredicate;
 import javax.annotation.Nonnull;
-import javax.annotation.Nullable;
+import javax.annotation.ParametersAreNonnullByDefault;
 
 /**
  * Special methods to use for character sequences...
@@ -45,6 +49,7 @@ import javax.annotation.Nullable;
  * @author zoly
  */
 @GwtCompatible
+@ParametersAreNonnullByDefault
 public final class CharSequences {
 
   private CharSequences() {
@@ -52,42 +57,49 @@ public final class CharSequences {
 
   /**
    * function that calculates the number of operations that are needed to transform s1 into s2. operations are: char
-   * add, char delete, char modify
+   * add, char delete, char modify See https://en.wikipedia.org/wiki/Levenshtein_distance for more info.
    *
    * @param s1
    * @param s2
-   * @return the number of operations required to transfor s1 into s2
+   * @return the number of operations required to transform s1 into s2
    */
-  public static int distance(@Nonnull final CharSequence s1, @Nonnull final CharSequence s2) {
+  @SuppressFBWarnings("CLI_CONSTANT_LIST_INDEX")
+  public static int distance(final CharSequence s1, final CharSequence s2) {
     int l1 = s1.length();
     int l2 = s2.length();
-
+    if (l1 == 0) {
+      return l2;
+    }
+    if (l2  == 0) {
+      return l1;
+    }
     int[] prev = new int[l2];
     char c1 = s1.charAt(0);
-    prev[0] = distance(c1, s2.charAt(0));
+    char cs20 = s2.charAt(0);
+    prev[0] = distance(c1, cs20);
     for (int j = 1; j < l2; j++) {
-      prev[j] = prev[j - 1] + distance(c1, s2.charAt(j));
+      int pd  = prev[j - 1];
+      prev[j] = pd == j ? pd + distance(c1, s2.charAt(j)) : pd + 1;
     }
-
+    int[] dist = new int[l2];
     for (int i = 1; i < l1; i++) {
-      int[] dist = new int[l2];
       c1 = s1.charAt(i);
-      dist[0] = prev[i - 1] + distance(c1, s2.charAt(0));
+      int pd = prev[0];
+      dist[0] = pd == i ? pd + distance(c1, cs20) : pd + 1;
       for (int j = 1; j < l2; j++) {
         dist[j] = min(prev[j - 1] + distance(c1, s2.charAt(j)),
                 min(prev[j] + 1, dist[j - 1] + 1));
       }
+      int[] tmp = prev;
       prev = dist;
+      dist = tmp;
     }
     return prev[l2 - 1];
   }
 
+
   public static int distance(final char c1, final char c2) {
-    if (c1 == c2) {
-      return 0;
-    } else {
-      return 1;
-    }
+    return (c1 == c2) ? 0 : 1;
   }
 
   /**
@@ -99,16 +111,16 @@ public final class CharSequences {
    * @deprecated use compare.
    */
   @Deprecated
-  public static int compareTo(@Nonnull final CharSequence s, @Nonnull final CharSequence t) {
+  public static int compareTo(final CharSequence s, final CharSequence t) {
     return compare(s, t);
   }
 
-  public static int compare(@Nonnull final CharSequence s, @Nonnull final CharSequence t) {
+  public static int compare(final CharSequence s, final CharSequence t) {
     return compare(s, 0, s.length(), t, 0, t.length());
   }
 
-  public static int compare(@Nonnull final CharSequence s, final int sLength,
-          @Nonnull final CharSequence t, final int tLength) {
+  public static int compare(final CharSequence s, final int sLength,
+          final CharSequence t, final int tLength) {
     return compare(s, 0, sLength, t, 0, tLength);
   }
 
@@ -123,8 +135,8 @@ public final class CharSequences {
    * @param tLength the number of characters to compare to.
    * @return
    */
-  public static int compare(@Nonnull final CharSequence s, final int sFrom, final int sLength,
-          @Nonnull final CharSequence t, final int tFrom, final int tLength) {
+  public static int compare(final CharSequence s, final int sFrom, final int sLength,
+          final CharSequence t, final int tFrom, final int tLength) {
 
     int lim = min(sLength, tLength);
     int i = sFrom;
@@ -142,7 +154,7 @@ public final class CharSequences {
     return sLength - tLength;
   }
 
-  public static boolean equalsNullables(@Nullable final CharSequence s, @Nullable final CharSequence t) {
+  public static boolean equalsNullables(final CharSequence s, final CharSequence t) {
     if (s == null) {
       return null == t;
     } else if (t == null) {
@@ -152,7 +164,7 @@ public final class CharSequences {
     }
   }
 
-  public static boolean equals(@Nonnull final CharSequence s, @Nonnull final CharSequence t) {
+  public static boolean equals(final CharSequence s, final CharSequence t) {
     final int sl = s.length();
     final int tl = t.length();
     if (sl != tl) {
@@ -167,7 +179,7 @@ public final class CharSequences {
     }
   }
 
-  public static int hashcode(@Nonnull final CharSequence cs) {
+  public static int hashcode(final CharSequence cs) {
     if (cs instanceof String) {
       return ((String) cs).hashCode();
     }
@@ -182,7 +194,7 @@ public final class CharSequences {
     return h;
   }
 
-  public static CharSequence subSequence(@Nonnull final CharSequence seq, final int startIdx, final int endIdx) {
+  public static CharSequence subSequence(final CharSequence seq, final int startIdx, final int endIdx) {
     if (startIdx == 0 && endIdx == seq.length()) {
       return seq;
     } else if (startIdx >= endIdx) {
@@ -236,6 +248,22 @@ public final class CharSequences {
       }
     }
 
+  }
+
+  public static boolean startsWith(final CharSequence sequence, final CharSequence prefix, final int toffset) {
+    int to = toffset;
+    int po = 0;
+    int pc = prefix.length();
+    int sl = sequence.length();
+    if ((toffset < 0) || (toffset > sl - pc)) {
+      return false;
+    }
+    while (--pc >= 0) {
+      if (sequence.charAt(to++) != prefix.charAt(po++)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   public static boolean endsWith(final CharSequence qc, final CharSequence with) {
@@ -383,6 +411,105 @@ public final class CharSequences {
     return negative ? result : -result;
   }
 
+
+  /**
+   * will parse a unsigned integer from a char sequence from idxFrom.
+   * @param cs
+   * @param radix
+   * @param idxFrom
+   * @return
+   */
+  @SuppressWarnings("checkstyle:InnerAssignment")
+  public static int parseUnsignedInt(@Nonnull final CharSequence cs, final int radix, final int idxFrom) {
+    return parseUnsignedInt(cs, radix, idxFrom, cs.length());
+  }
+
+
+  /**
+   * will parse a unsigned integer from a char sequence from idxFrom.
+   * @param cs
+   * @param radix
+   * @param idxFrom
+   * @param idxTo
+   * @return
+   */
+  @SuppressWarnings("checkstyle:InnerAssignment")
+  public static int parseUnsignedInt(@Nonnull final CharSequence cs, final int radix,
+          final int idxFrom, final int idxTo) {
+    if (radix < Character.MIN_RADIX) {
+      throw new NumberFormatException("radix " + radix
+              + " less than Character.MIN_RADIX");
+    }
+    if (radix > Character.MAX_RADIX) {
+      throw new NumberFormatException("radix " + radix
+              + " greater than Character.MAX_RADIX");
+    }
+
+    int result = 0;
+    int i = idxFrom;
+    int limit = -Integer.MAX_VALUE;
+    int multmin = limit / radix;
+    int digit;
+    while (i < idxTo && (digit = Character.digit(cs.charAt(i), radix)) >= 0) {
+      if (result < multmin) {
+        throw new NumberFormatException("For input char sequence: \"" + cs + "\" at " + i);
+      }
+      result *= radix;
+      if (result < limit + digit) {
+        throw new NumberFormatException("For input char sequence: \"" + cs + "\" at " + i);
+      }
+      result -= digit;
+      i++;
+    }
+    if (i == idxFrom) {
+      throw new NumberFormatException("No number in \"" + cs + "\" at " + idxFrom);
+    }
+    return -result;
+  }
+
+
+ @SuppressWarnings("checkstyle:InnerAssignment")
+  public static long parseUnsignedLong(@Nonnull final CharSequence cs, final int radix, final int idxFrom) {
+    return parseUnsignedLong(cs, radix, idxFrom, cs.length(), false);
+  }
+
+  @SuppressWarnings("checkstyle:InnerAssignment")
+  public static long parseUnsignedLong(@Nonnull final CharSequence cs, final int radix,
+          final int idxFrom, final int idxTo, final boolean strict) {
+    if (radix < Character.MIN_RADIX) {
+      throw new NumberFormatException("radix " + radix
+              + " less than Character.MIN_RADIX");
+    }
+    if (radix > Character.MAX_RADIX) {
+      throw new NumberFormatException("radix " + radix
+              + " greater than Character.MAX_RADIX");
+    }
+
+    long result = 0;
+    int i = idxFrom;
+    long limit = -Long.MAX_VALUE;
+    long multmin = limit / radix;
+    int digit;
+    while (i < idxTo && (digit = Character.digit(cs.charAt(i), radix)) >= 0) {
+      if (result < multmin) {
+        throw new NumberFormatException("For input char sequence: \"" + cs + "\" at " + i);
+      }
+      result *= radix;
+      if (result < limit + digit) {
+        throw new NumberFormatException("For input char sequence: \"" + cs + "\" at " + i);
+      }
+      result -= digit;
+      i++;
+    }
+    if (i == idxFrom) {
+      throw new NumberFormatException("No number in " + cs + " at " + idxFrom);
+    }
+    if (strict && i < idxTo) {
+      throw new NumberFormatException("No valid number in " + cs + " at " + idxFrom + " to " + idxTo);
+    }
+    return -result;
+  }
+
   /**
    * A more flexible version of Long.parseLong.
    *
@@ -454,7 +581,13 @@ public final class CharSequences {
   }
 
   public static boolean containsAnyChar(final CharSequence string, final char... chars) {
-    for (int i = 0; i < string.length(); i++) {
+    return containsAnyChar(string, 0, string.length(), chars);
+  }
+
+  public static boolean containsAnyChar(final CharSequence string,
+          final int start, final int end,
+          final char... chars) {
+    for (int i = start; i < end; i++) {
       char c = string.charAt(i);
       if (Arrays.search(chars, c) >= 0) {
         return true;
@@ -462,6 +595,26 @@ public final class CharSequences {
     }
     return false;
   }
+
+  public static boolean isValidJavaId(final CharSequence name) {
+    int length = name.length();
+    if (length == 0) {
+      return false;
+    }
+    char first = name.charAt(0);
+    if (Character.isLetter(first) || first == '_') {
+      for (int i = 1; i < length; i++) {
+        char c = name.charAt(i);
+        if (c != '_' && !Character.isLetterOrDigit(c)) {
+          return false;
+        }
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+
 
   public static boolean isValidFileName(@Nonnull final CharSequence fileName) {
     return !containsAnyChar(fileName, '/', '\\');
@@ -536,9 +689,8 @@ public final class CharSequences {
   }
 
   /**
-   * regular wildcard matcher.
-   * * matches any number of consecutive characters.
-   * ? matches any single character.
+   * regular wildcard matcher. * matches any number of consecutive characters. ? matches any single character.
+   *
    * @param wildcard
    * @param cs2Match
    * @return
@@ -568,17 +720,16 @@ public final class CharSequences {
     return j == cs2Match.length();
   }
 
-
   /**
-   * Transform a wildcard expression 2 a java regular expression.
-   * * matches any number of consecutive characters.
-   * ? matches any single character.
+   * Transform a wildcard expression 2 a java regular expression. * matches any number of consecutive characters. ?
+   * matches any single character.
+   *
    * @param wildcard
    * @return
    */
   public CharSequence getJavaRegexpStr(final CharSequence wildcard) {
-    final StringBuilder buff = new StringBuilder();
     final int length = wildcard.length();
+    final StringBuilder buff = new StringBuilder(length + 4);
     for (int i = 0; i < length; i++) {
       final char c = wildcard.charAt(i);
       switch (c) {
@@ -602,6 +753,92 @@ public final class CharSequences {
       }
     }
     return buff;
+  }
+
+  public static int indexOf(final CharSequence cs, final int from, final int to, final char c) {
+    for (int i = from; i < to; i++) {
+      if (c == cs.charAt(i)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  public static int indexOf(final CharSequence cs, final int from, final int to, final IntPredicate cp) {
+    for (int i = from; i < to; i++) {
+      if (cp.test(cs.charAt(i))) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  public static int indexOf(final CharSequence cs, final int from, final int to, final char... chars) {
+    for (int i = from; i < to; i++) {
+      char charAt = cs.charAt(i);
+      for (char c : chars) {
+        if (c == charAt) {
+          return i;
+        }
+      }
+    }
+    return -1;
+  }
+
+  public static boolean containsIgnoreCase(final CharSequence str, final CharSequence searchStr) {
+    return lastIndexOfIgnoreCase(str, searchStr) >= 0;
+  }
+
+  public static int lastIndexOfIgnoreCase(final CharSequence str, final CharSequence searchStr) {
+    final int length = searchStr.length();
+    if (length == 0) {
+      return 0;
+    }
+    for (int i = str.length() - length; i >= 0; i--) {
+      if (regionMatchesIgnoreCase(str, i, searchStr, 0, length)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  public static int indexOfIgnoreCase(final CharSequence str, final CharSequence searchStr, final int idxStart) {
+    final int sLen = searchStr.length();
+    if (sLen == 0) {
+      return 0;
+    }
+    for (int i = idxStart, l = str.length() - sLen; i <= l; i++) {
+      if (regionMatchesIgnoreCase(str, i, searchStr, 0, sLen)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+
+  public static int countIgnoreCase(final CharSequence str, final CharSequence searchStr) {
+    int result = 0;
+    int sLen = searchStr.length();
+    if (sLen == 0) {
+      return 0;
+    }
+    int from = 0;
+    int idx;
+    while ((idx = indexOfIgnoreCase(str, searchStr, from)) >= 0) {
+      result++;
+      from = idx + sLen;
+    }
+    return result;
+  }
+
+
+  @GwtIncompatible
+  public static Reader reader(final CharSequence cs) {
+    try {
+      return CharSource.wrap(cs).openStream();
+    } catch (IOException ex) {
+      throw new UncheckedIOException(ex);
+    }
   }
 
 

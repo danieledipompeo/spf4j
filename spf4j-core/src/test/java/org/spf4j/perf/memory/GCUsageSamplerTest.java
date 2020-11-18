@@ -32,30 +32,44 @@
 package org.spf4j.perf.memory;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.io.IOException;
+import gnu.trove.map.hash.TObjectLongHashMap;
+import java.lang.management.GarbageCollectorMXBean;
+import java.util.List;
 import org.junit.Assert;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- *
  * @author zoly
  */
 public final class GCUsageSamplerTest {
 
-    @Test
-    @SuppressFBWarnings("MDM_THREAD_YIELD")
-    public void testSomeMethod() throws InterruptedException, IOException {
-        System.setProperty("perf.memory.sampleAggMillis", "1000");
-        GCUsageSampler.start(100);
-        MemoryUsageSampler.start(100);
-        String str = "";
-        for (int i = 0; i < 100000; i++) {
-            str = Integer.toString(i);
-        }
-        System.out.println(str);
-        Thread.sleep(1000);
-        MemoryUsageSampler.stop();
-        GCUsageSampler.stop();
-        Assert.assertFalse(GCUsageSampler.isStarted());
+  private static final Logger LOG = LoggerFactory.getLogger(GCUsageSamplerTest.class);
+
+  @Test
+  public void testSomeMethod() throws InterruptedException {
+    assertSamplerBehavior();
+    assertSamplerBehavior();
+  }
+
+  @SuppressFBWarnings("MDM_THREAD_YIELD")
+  private void assertSamplerBehavior() throws InterruptedException {
+    GCUsageSampler.start(100);
+    String str = "";
+    for (int i = 0; i < 100000; i++) {
+      str = Integer.toString(i);
     }
+    LOG.debug("lastNr = {}", str);
+    Thread.sleep(1000);
+    GCUsageSampler.stop();
+    Assert.assertFalse(GCUsageSampler.isStarted());
+  }
+
+  @Test
+  public void testSampling() {
+    List<GarbageCollectorMXBean> beans = GCUsageSampler.getMBEANS();
+    long gcTimeDiff = GCUsageSampler.getGCTimeDiff(beans, new TObjectLongHashMap<>());
+    Assert.assertTrue(gcTimeDiff >= 0);
+  }
 }
